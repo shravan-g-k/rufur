@@ -67,16 +67,19 @@ def review(svc: "MemoryService", memory_id: str, *, force: bool = False) -> dict
 
     flags = sorted(set(m["flags"]) | {REVIEWED})
     confident = v.confidence >= svc.cfg.auto_resolve_confidence
+    said = f"reviewer ({v.decision}, {v.confidence:.2f}): {v.reason or 'no reason given'}"
     if confident and v.decision == "reject":
-        svc.ledger.update_memory(memory_id, status="rejected", valid_to=now(), flags=flags)
+        svc.ledger.update_memory(memory_id, status="rejected", valid_to=now(), flags=flags, status_reason=said)
         svc.ledger.op("reject", memory_id, "memory_layer", {"reason": v.reason})
         decision = "rejected"
     elif confident and v.decision == "approve" and m["trust"] == "high":
-        svc.ledger.update_memory(memory_id, status="active", flags=sorted(set(flags) | {"decided_by:memory_layer"}))
+        svc.ledger.update_memory(memory_id, status="active", flags=sorted(set(flags) | {"decided_by:memory_layer"}),
+                                 status_reason=said)  # fmt: skip
         svc.ledger.op("confirm", memory_id, "memory_layer", {"by": "memory_layer", "reason": v.reason})
         decision = "approved"
     else:
-        svc.ledger.update_memory(memory_id, flags=flags)
+        held = m["status_reason"] or "held for review"
+        svc.ledger.update_memory(memory_id, flags=flags, status_reason=f"{held}; {said}, so it waits for the user")
         decision = "held"
     svc.ledger.audit("memory_layer", f"review.{decision}", memory_id, {"llm": v.decision, "confidence": v.confidence})
     return {"id": memory_id, "decision": decision, "reason": v.reason}

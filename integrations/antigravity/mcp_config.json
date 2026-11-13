@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "rufur": {
+      "command": "/Users/shravangkulal/coding/hackthon/rufur/.venv/bin/rufur",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "RUFUR_AGENT": "antigravity"
+      }
+    }
+  }
+}

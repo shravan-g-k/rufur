@@ -20,7 +20,7 @@ from ..llm import LLM
 from ..textutil import norm_key, now
 from . import conflict, resolve
 from .importance import initial_importance
-from .trust import TRUST_ORDER, initial_status, instruction_like, trust_at_least, trust_for
+from .trust import TRUST_ORDER, hold_reason, initial_status, instruction_like, trust_at_least, trust_for
 
 CHUNK_CHARS = 900
 
@@ -143,6 +143,7 @@ class WritePath:
                 "source_type": source_type,
                 "flags": flags,
                 "pinned": int(claim.pinned),
+                "status_reason": hold_reason(trust, flags) if status == "quarantined" else None,
             }
         )
 
@@ -173,7 +174,8 @@ class WritePath:
         status = "quarantined" if agent.get("quarantined") else initial_status(trust, flags)
 
         vec = self._embed(claim.text)
-        candidates = conflict.find_candidates(self.db, candidate_pools or [pool_id], claim.subject, claim.predicate, vec)
+        candidates = conflict.find_candidates(self.db, candidate_pools or [pool_id], claim.subject, claim.predicate, vec,
+                                             radius=self.cfg.conflict_radius)  # fmt: skip
         related: list[dict] = []
         llm_tokens = 0
         scope_new: str | None = None
@@ -186,7 +188,8 @@ class WritePath:
         )
         for existing, how in candidates:
             verdict, tokens = conflict.classify(self.llm, existing, claim.text, how, claim.value, evidence, claim.subject,
-                                                claim.predicate, source_quote=" ".join(q for _, q in sources)[:500])  # fmt: skip
+                                                claim.predicate, source_quote=" ".join(q for _, q in sources)[:500],
+                                                margin=self.cfg.decision_margin)  # fmt: skip
             llm_tokens += tokens
             if verdict.outcome == "duplicate":
                 return self._corroborate(existing, claim, agent, source_type, trust, sources, llm_tokens)

@@ -107,6 +107,7 @@ export function MemorySheet({ id, ttl, onClose, onChanged, onSelect }: Props) {
               {(m.status === "quarantined" || m.status === "disputed") && (
                 <Alert>
                   <AlertTitle>{m.status === "disputed" ? "Is this the correct version?" : "Should agents be allowed to use this?"}</AlertTitle>
+                  {m.status_reason && <AlertDescription>Held because {m.status_reason}.</AlertDescription>}
                   <AlertDescription className="flex gap-2 pt-2">
                     <Button size="sm" onClick={() => decide("confirm")}>
                       {m.status === "disputed" ? "Keep this version" : "Approve"}
@@ -115,6 +116,13 @@ export function MemorySheet({ id, ttl, onClose, onChanged, onSelect }: Props) {
                       Reject
                     </Button>
                   </AlertDescription>
+                </Alert>
+              )}
+
+              {m.status === "rejected" && m.status_reason && (
+                <Alert>
+                  <AlertTitle>Rejected</AlertTitle>
+                  <AlertDescription>{m.status_reason}</AlertDescription>
                 </Alert>
               )}
 

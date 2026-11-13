@@ -185,7 +185,7 @@ Key `memories` columns:
 
 ```
  message ─▶ events row ─▶ salience gate ─▶ chunk ─▶ LLM extract ─▶ quote check ─▶ WritePath.commit ─▶ STM
- (hook /     (verbatim)    (regex, no LLM)  ≤400    (local 7B)      (verbatim)       trust, tombstone,
+ (hook /     (verbatim)    (regex, no LLM)  ≤1200   (local 7B)      (verbatim)       trust, tombstone,
   log_event)                                chars                                    conflict, placement
 ```
 
@@ -199,15 +199,15 @@ Key `memories` columns:
 
 All extraction runs on a single worker thread (`ThreadPoolExecutor(max_workers=1)`), so it never overlaps other background jobs.
 
-**3. Chunk and gate (`write/chunk.py`).** Text is split into sentence-bounded chunks of at most 400 characters (verbatim slices). `is_salient` keeps only chunks that look like statements about the user, preferences, decisions, changes, dates, procedures, factual claims or secrets, and drops questions and requests unless they also contain a statement ("can you note that I moved to Pune?"). Assistant text passes only when it states an outright decision.
+**3. Chunk and gate (`write/chunk.py`).** Text is split into sentence-bounded chunks of at most 1200 characters (verbatim slices). `is_salient` keeps only chunks that look like statements about the user, preferences, decisions, changes, dates, procedures, factual claims or secrets, and drops questions and requests unless they also contain a statement ("can you note that I moved to Pune?"). Assistant text passes only when it states an outright decision.
 
-**4. Extract (`write/extract.py`).** Chunks go in batches of about 900 characters to the `extract` LLM role, which returns compact rows `[chunk, type, subject, predicate, value, (sensitivity)]` rather than sentences. The `text` is built in code (`FlatClaim.text`), because on a local 7B model decoding time is the cost and a row of five strings is about 3x cheaper than a JSON object with a sentence. A response with any malformed row is rejected and the next model in the chain gets a go. The **quote** is the source chunk itself, checked to be a verbatim substring of the event (`quote_in`).
+**4. Extract (`write/extract.py`).** Chunks go in batches of about 1400 characters (about one chunk per call) to the `extract` LLM role, which returns compact rows `[chunk, type, subject, predicate, value, (sensitivity)]` rather than sentences. The `text` is built in code (`FlatClaim.text`), because on a local 7B model decoding time is the cost and a row of five strings is about 3x cheaper than a JSON object with a sentence. A response with any malformed row is rejected and the next model in the chain gets a go. The **quote** is the source chunk itself, checked to be a verbatim substring of the event (`quote_in`).
 
 **5. Commit (`write/pipeline.py::WritePath.commit`).** One validated claim becomes ledger state:
 
 1. **Alias normalisation.** If the subject is the user's own name, it becomes `user`, so `rahul sharma|age` and `user|age` share one key space.
 2. **Tombstone check.** A claim whose text or key hashes to a tombstone is dropped (`outcome: tombstoned`): forgotten facts don't come back.
-3. **Trust** is set from `source_type` (agent writes use the agent's configured trust). **Flags**: `instruction_like` if the claim or its quote matches steering language; `agent_quarantined` if the agent is held. Low-trust and instruction-like claims start `quarantined`.
+3. **Trust** is set from `source_type` (agent writes use the agent's configured trust). **Flags**: `instruction_like` if the claim or its quote matches steering language; `agent_quarantined` if the agent is held. Low-trust claims start `quarantined`, and so do instruction-like ones unless the user said them. Held and rejected memories record why in `status_reason`.
 4. **Conflict candidates**: existing live memories with the same `(subject, predicate)` key, plus vector neighbours at cosine distance ≤ 0.15, across the user's STM and the target LTM pool.
 5. **Classification** of each candidate (duplicate / update / context / coexist / unclear / unrelated), detailed in [CONFLICT_RESOLUTION.md](docs/CONFLICT_RESOLUTION.md).
 6. **Insert** the memory with `tier='stm'`, `expires_at = now + 72h`, a volatility and `revalidate_at`, an initial importance by type, then attach sources, embed it, and place derived views (vector always; graph edge for `relation`; typed row for `table`; markdown file + chunks for `procedure`/`document`).
@@ -215,7 +215,7 @@ All extraction runs on a single worker thread (`ThreadPoolExecutor(max_workers=1
 
 **6. Settle (`service._settle`).** Right after a commit, the memory layer tries to resolve any new conflict itself (`resolve.auto_resolve`) or, for a held memory, reviews it with the review LLM (`review.review`).
 
-**7. Guard (`service._guard`).** After each write batch, an agent writing more than 60 memories/min or making more than 5 override attempts/hour is quarantined, along with everything it wrote.
+**7. Guard (`service._guard`).** After each write batch, an agent writing more than 60 memories/min (not counting claims from the user's own messages) or making more than 5 override attempts/hour is quarantined, along with everything it wrote.
 
 **Explicit `remember`.** Agents can write directly. Without a `subject`/`predicate`, the text goes through the same extractor with the salience gate off. `source="user"` is believed only if a logged user turn from that agent in the last 24 h contains the text; otherwise it is downgraded to `document` trust with an `unverified_user_claim` flag. `long_term=true` consolidates the new memory immediately.
 
@@ -362,6 +362,7 @@ The MCP endpoint (`/mcp`) runs in stateless JSON mode, so no session state has t
 
 - **Claude Code plugin** (`integrations/claude-code`): `hooks/rufur_hook.py` (stdlib only, fails open) handles `SessionStart` (bootstrap and inject the working set), `UserPromptSubmit` (capture the prompt, inject unseen relevant memories), `PostToolUse` for `WebFetch|WebSearch` (capture as low trust), `Stop` (capture the reply), `SubagentStop` (close idle pools), `SessionEnd`. Ships the `rufur-memory` skill and registers the MCP server.
 - **opencode** (`integrations/opencode`): MCP config plus `AGENTS.md` instructions and a plugin.
+- **Antigravity** (`integrations/antigravity`): `mcp_config.json` (stdio bridge `rufur mcp` as agent `antigravity`) to merge into `~/.gemini/config/mcp_config.json`, plus `GEMINI.md` rules for `~/.gemini/GEMINI.md`.
 - **pi** (`integrations/pi`): no MCP, so a skill with `scripts/rufur.py` plus an extension that recalls and captures automatically.
 
 ### The UI (`ui/`)
@@ -376,7 +377,7 @@ Values come from `~/.rufur/config.toml` (or `$RUFUR_HOME/config.toml`) over the 
 
 | Group | Settings (default) |
 |---|---|
-| Write | `checkpoint_every` 6, `extract_idle_s` 30, `chunk_chars` 400, `extract_batch_chars` 900 |
+| Write | `checkpoint_every` 6, `extract_idle_s` 30, `chunk_chars` 1200, `extract_batch_chars` 1400 |
 | Read | `default_token_budget` 800, `abstain_threshold` 0.42, `verify_band` (0.2, 0.6), `recency_half_life_days` 30, `candidate_k` 40, `rerank_top_n` 20 |
 | STM | `stm_base_ttl_h` 72, `stm_extend_h` 24, `stm_max_ttl_h` 168, `stm_grace_h` 24, `sweep_every_min` 15 |
 | Consolidation | `nightly_hour` 3, `catch_up_after_h` 20, `size_trigger_items` 200, `size_trigger_events` 300, `consolidate_batch` 25 |

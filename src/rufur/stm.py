@@ -87,7 +87,17 @@ def sweep(svc: "MemoryService") -> dict:
         svc.pool_close("sweeper", p["id"], reason="expired")
         stats["pools_closed"] += 1
 
-    # 5. Raw events older than the STM window that no memory cites any more.
+    # 5. Sessions that never produced a memory. Ended ones go now; open ones with no messages at all go after a
+    #    day (Claude Code doesn't always send SessionEnd, e.g. when the terminal is closed).
+    stats["empty_sessions_dropped"] = 0
+    for r in svc.db.all(
+        "SELECT id, ended_at FROM sessions s WHERE ended_at IS NOT NULL"
+        " OR (started_at < ? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id))",
+        (t - svc.cfg.stm_grace_h * 3600,),
+    ):
+        stats["empty_sessions_dropped"] += svc.drop_if_empty(r["id"], abandoned=r["ended_at"] is None)
+
+    # 6. Raw events older than the STM window that no memory cites any more.
     cutoff = t - (svc.cfg.stm_max_ttl_h + svc.cfg.stm_grace_h) * 3600
     stats["events_dropped"] = svc.db.execute(
         "DELETE FROM events WHERE created_at < ? AND id NOT IN (SELECT event_id FROM memory_sources)", (cutoff,)

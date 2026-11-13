@@ -86,9 +86,45 @@ question, so that the two values could contradict each other? "home city" and "l
 Return {"same": true} or {"same": false}."""
 
 
-def _same_attribute(llm: LLM, existing: dict, new_subject: str, new_predicate: str, new_value: str) -> tuple[bool | None, int]:
+# What the decision model (Kev) is asked; it only settles the clear cases, qwen handles the rest.
+_RELATION = {
+    "duplicate": "they say the same thing",
+    "update": "the NEW claim replaces the EXISTING one because the fact changed or was corrected",
+    "coexist": "both are true at once: another value of a list-like attribute, or a different aspect of the same thing",
+    "context": "both can be true but in different situations (work vs personal, different projects)",
+    "unclear": "they answer the same question with incompatible answers and it is unknown which is right",
+    "unrelated": "they are about different things",
+}
+_FAST_OUTCOMES = ("duplicate", "update", "coexist", "unrelated")  # context/unclear need scopes or a reason: qwen
+
+
+def _fast_verdict(llm: LLM, margin: float, existing: dict, prompt: str) -> tuple[Verdict, int] | None:
+    """Kev's answer when it is clear and the outcome needs no explanation, else None (qwen decides)."""
+    try:
+        answers, tokens = llm.decide(prompt, {"relation": {"type": "choice", "criteria": _RELATION,
+                                              "instructions": "How does the NEW claim relate to the EXISTING memory?"}})  # fmt: skip
+        probs = answers["relation"]["probabilities"]
+    except (LLMUnavailable, KeyError):
+        return None
+    top = sorted(probs.items(), key=lambda kv: kv[1], reverse=True)
+    if top[0][0] not in _FAST_OUTCOMES or top[0][1] - top[1][1] < margin:
+        return None
+    return Verdict(outcome=top[0][0], reason=f"decision model {top[0][1]:.2f}"), tokens
+
+
+def _same_attribute(llm: LLM, existing: dict, new_subject: str, new_predicate: str, new_value: str,
+                    margin: float = 0.4) -> tuple[bool | None, int]:  # fmt: skip
     prompt = (f"A: {existing.get('subject')} / {existing.get('predicate')} / {existing.get('value')}\n"
               f"B: {new_subject} / {new_predicate} / {new_value}")  # fmt: skip
+    try:
+        answers, tokens = llm.decide(prompt, {"same": {"type": "noul", "instructions":
+            "Do A and B ask the SAME question, so that the two values could contradict each other? "
+            "('home city' and 'location': yes. 'description' and 'status': no.)"}})  # fmt: skip
+        p = answers["same"]["noul"]
+        if abs(p - 0.5) * 2 >= margin:
+            return p > 0.5, tokens
+    except (LLMUnavailable, KeyError):
+        pass
     try:
         out, usage = llm.complete("classify", ATTRIBUTE_SYSTEM, prompt, SameAttribute)
         return out.same, usage.tokens_in + usage.tokens_out
@@ -97,8 +133,13 @@ def _same_attribute(llm: LLM, existing: dict, new_subject: str, new_predicate: s
 
 
 def find_candidates(db: Database, pool_ids: list[str], subject: str, predicate: str,
-                    vec: list[float] | None, exclude_id: str | None = None) -> list[tuple[dict, str]]:  # fmt: skip
-    """Returns [(memory, how)] where how is 'key' or 'vector'."""
+                    vec: list[float] | None, exclude_id: str | None = None, radius: float = 0.30) -> list[tuple[dict, str]]:  # fmt: skip
+    """Returns [(memory, how)] where how is 'key' or 'vector'.
+
+    `radius` is a cosine distance. A small model keys one fact differently from message to message ("public
+    launch date" vs "launch date", subject "user" vs "ledgerly"), so the key alone misses most real
+    contradictions; measured on the demo story they sit at 0.21-0.27 from each other. Unrelated neighbours that
+    come in with them are labelled "unrelated" by `classify` and left alone."""
     marks = ",".join("?" * len(pool_ids))
     status_marks = ",".join("?" * len(LIVE_STATUSES))
     found: dict[str, tuple[dict, str]] = {}
@@ -119,8 +160,7 @@ def find_candidates(db: Database, pool_ids: list[str], subject: str, predicate: 
             (pack_vector(vec), *pool_ids, *LIVE_STATUSES),
         )
         for m in rows:
-            # cosine distance; 0.15 ≈ similarity 0.85
-            if m.pop("distance") <= 0.15 and m["id"] not in found:
+            if m.pop("distance") <= radius and m["id"] not in found:
                 found[m["id"]] = (m, "vector")
             if len(found) >= 5:
                 break
@@ -129,7 +169,8 @@ def find_candidates(db: Database, pool_ids: list[str], subject: str, predicate: 
 
 
 def classify(llm: LLM, existing: dict, new_text: str, how: str, new_value: str, evidence: str = "",
-             new_subject: str = "", new_predicate: str = "", source_quote: str = "") -> tuple[Verdict, int]:  # fmt: skip
+             new_subject: str = "", new_predicate: str = "", source_quote: str = "",
+             margin: float = 0.4) -> tuple[Verdict, int]:  # fmt: skip
     """Returns (verdict, llm tokens used). `evidence` is the raw source text behind the new claim."""
     if how == "key" and norm_key(existing["value"]) == norm_key(new_value):
         return Verdict(outcome="duplicate", reason="same key and value"), 0
@@ -141,8 +182,12 @@ def classify(llm: LLM, existing: dict, new_text: str, how: str, new_value: str, 
         # The claim's wording is built from its fields and drops cues like "moved" or "actually"; the source keeps them.
         prompt += f"\nNEW SOURCE: {source}"
     try:
-        verdict, usage = llm.complete("classify", SYSTEM, prompt, Verdict)
-        tokens = usage.tokens_in + usage.tokens_out
+        fast = _fast_verdict(llm, margin, existing, prompt)
+        if fast:
+            verdict, tokens = fast
+        else:
+            verdict, usage = llm.complete("classify", SYSTEM, prompt, Verdict)
+            tokens = usage.tokens_in + usage.tokens_out
     except LLMUnavailable:
         verdict, tokens = Verdict(outcome="unclear" if how == "key" else "unrelated", reason="classifier unavailable"), 0
     if verdict.outcome == "update" and not CHANGE_MARKERS.search(evidence or new_text):
@@ -152,7 +197,7 @@ def classify(llm: LLM, existing: dict, new_text: str, how: str, new_value: str, 
             and norm_key(new_predicate) != existing["predicate"]):  # fmt: skip
         # Whole-sentence judgements from small models over-call conflicts between different aspects of one
         # thing; a narrow "same attribute?" question about the two keys is far more reliable.
-        same, extra = _same_attribute(llm, existing, new_subject, new_predicate, new_value)
+        same, extra = _same_attribute(llm, existing, new_subject, new_predicate, new_value, margin)
         tokens += extra
         if same is not None:
             verdict.same_attribute = same

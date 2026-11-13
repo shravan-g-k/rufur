@@ -79,6 +79,32 @@ class LLM:
             return fallback
         raise LLMUnavailable("; ".join(errors) or f"no usable provider for role {role!r}")
 
+    def decide(self, state: str, questions: dict[str, dict]) -> tuple[dict[str, dict], int]:
+        """Typed decisions (noul / choice / score) from a decision model such as Kev via Ollama's /v1/systemone.
+
+        It returns calibrated probabilities with no generated text, so it is much cheaper than `complete` for
+        yes/no and pick-one questions. Raises `LLMUnavailable` for any failure; callers fall back to `complete`.
+        """
+        if self.cfg.offline or not self.cfg.decision_model:
+            raise LLMUnavailable("decision model off")
+        if self._down_until.get("decide", 0) > time.time():
+            raise LLMUnavailable("decision model down")
+        body = {"model": self.cfg.decision_model, "state": state, "questions": questions, "keep_alive": "30m"}
+        try:
+            r = self.client.post(f"{self.cfg.ollama_url.rstrip('/')}/v1/systemone", json=body)
+            r.raise_for_status()
+            payload = r.json()
+            return payload["answers"], payload.get("usage", {}).get("input_tokens", 0)
+        except httpx.ConnectError as e:
+            self._down_until["decide"] = time.time() + 30
+            raise LLMUnavailable(f"decision model: {e}") from e
+        except httpx.HTTPStatusError as e:
+            # 404 / 400: the model isn't pulled or isn't a decision model; don't retry on every write.
+            self._down_until["decide"] = time.time() + (600 if e.response.status_code in (400, 404) else 30)
+            raise LLMUnavailable(f"decision model: {e}") from e
+        except (httpx.HTTPError, KeyError, ValueError) as e:
+            raise LLMUnavailable(f"decision model: {e}") from e
+
     def _call(self, hop: ProviderRef, system: str, user: str, schema: type[BaseModel], num_predict: int = 2048) -> LLMResult:
         started = time.perf_counter()
         json_schema = schema.model_json_schema()
@@ -135,6 +161,9 @@ class FakeLLM(LLM):
     def __init__(self, cfg: Config, handler: Callable[[str, str], dict[str, Any]]):
         self.cfg = cfg
         self.handler = handler
+
+    def decide(self, state: str, questions: dict[str, dict]) -> tuple[dict[str, dict], int]:
+        raise LLMUnavailable("fake: no decision model")
 
     def complete(self, role: str, system: str, user: str, schema: type[T], *, accept: Callable[[T], bool] | None = None,
                  num_predict: int = 2048) -> tuple[T, LLMResult]:  # fmt: skip

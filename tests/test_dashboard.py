@@ -83,6 +83,25 @@ def test_tokens_are_bucketed(client):
     assert out["series"] and out["cumulative"]
     assert out["cumulative"][-1]["full_history"] == 11 and out["cumulative"][-1]["rufur"] > 0  # two short events
     assert any(a["agent"] == "claude-code" for a in out["by_agent"])
+    assert len(out["series"]) == 1 and "claude-code" in out["series"][0]["agents"]
+    hourly = get(client, "/v1/dashboard/tokens?bucket=hour")["series"]
+    assert len(hourly) >= 48 and hourly[0]["recall"] == 0  # quiet hours are filled in as zero
+
+
+def test_token_sessions_split_after_twenty_quiet_minutes(service):
+    from rufur import textutil
+    from rufur.dashboard import tokens
+
+    try:
+        service.recall("claude-code", "where does the user live")
+        textutil.CLOCK_OFFSET = 10 * 60
+        service.recall("claude-code", "what editor")
+        textutil.CLOCK_OFFSET = 35 * 60
+        service.recall("pi", "deadline")
+        series = tokens(service, "session")["series"]
+        assert [s["agents"] for s in series] == [["claude-code"], ["pi"]]
+    finally:
+        textutil.CLOCK_OFFSET = 0.0
 
 
 def test_totals_count_memories_without_a_session(client):

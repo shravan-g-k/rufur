@@ -115,6 +115,39 @@ def stop():
 
 
 @app.command()
+def reset(yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation"),
+          backup: bool = typer.Option(True, help="Move the old data to ~/.rufur/backups/<time> instead of deleting it")):  # fmt: skip
+    """Wipe all memory (database, procedure files, hook sessions). Config and the receipt key are kept."""
+    cfg = load_config()
+    targets = [p for p in (cfg.db_path, Path(f"{cfg.db_path}-wal"), Path(f"{cfg.db_path}-shm"), cfg.files_dir,
+                           cfg.home / "hook_sessions.json") if p.exists()]  # fmt: skip
+    if not targets:
+        typer.echo("nothing to reset")
+        return
+    if not yes:
+        where = "moved to ~/.rufur/backups" if backup else "deleted"
+        typer.confirm(f"Wipe all RUFUR memory in {cfg.home}? It will be {where}.", abort=True)
+    was_running = _read_pid(cfg) is not None
+    if was_running:
+        stop()
+    import shutil
+
+    dest = cfg.home / "backups" / time.strftime("%Y%m%d-%H%M%S")
+    if backup:
+        dest.mkdir(parents=True)
+    for p in targets:
+        if backup:
+            shutil.move(str(p), dest / p.name)
+        elif p.is_dir():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+    typer.echo(f"memory wiped{f'; old data in {dest}' if backup else ''}")
+    if was_running:
+        start()
+
+
+@app.command()
 def status():
     """Show daemon, Ollama and model status."""
     cfg = load_config()

@@ -21,7 +21,7 @@ MEMORY_FIELDS = (
     "valid_from", "valid_to", "status", "trust", "confidence", "importance", "sensitivity",
     "owner", "author_agent", "source_type", "superseded_by", "flags", "pinned",
     "created_at", "updated_at", "tier", "store", "target_pool", "expires_at", "volatility",
-    "revalidate_at", "corroboration",
+    "revalidate_at", "corroboration", "status_reason",
 )  # fmt: skip
 
 

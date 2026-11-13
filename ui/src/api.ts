@@ -48,6 +48,7 @@ export interface Memory {
   volatility: string;
   corroboration: number;
   flags: string[];
+  status_reason: string | null;
   pool: string;
   access_count: number;
   retention_score: number;
@@ -233,9 +234,13 @@ export interface EvolutionPoint {
   expired: number;
 }
 
+export type TokenBucket = "session" | "hour";
+
 export interface Tokens {
-  bucket: "hour" | "day";
-  series: { t: number; recall: number; remember: number; extract: number; forget: number; llm: number; served: number }[];
+  bucket: TokenBucket;
+  // In "session" buckets, t is when the burst of activity started; end, calls and agents describe it.
+  series: { t: number; recall: number; remember: number; extract: number; forget: number; llm: number; served: number;
+    end?: number; calls?: number; agents?: string[] }[];
   cumulative: { t: number; full_history: number; rufur: number }[];
   by_agent: { agent: string; calls: number; tokens_in: number; tokens_out: number; llm_tokens: number }[];
   totals: { tokens_in: number; tokens_out: number; llm_tokens: number };
@@ -356,7 +361,7 @@ export const api = {
   sessions: () => req<Sessions>("GET", "/v1/dashboard/sessions"),
   poolMemories: (kind: Scope, id: string) => req<{ items: PoolMemory[]; now: number }>("GET", `/v1/dashboard/${kind}/${id}/memories`),
   timeline: (kind: Scope, id: string) => req<{ events: TimelineEvent[]; series: EvolutionPoint[] }>("GET", `/v1/dashboard/${kind}/${id}/timeline`),
-  tokens: (bucket: "hour" | "day") => req<Tokens>("GET", `/v1/dashboard/tokens?bucket=${bucket}`),
+  tokens: (bucket: TokenBucket) => req<Tokens>("GET", `/v1/dashboard/tokens?bucket=${bucket}`),
   forgetting: () => req<Forgetting>("GET", "/v1/dashboard/forgetting"),
   verifyForgetting: () => req<Forgetting["chain"]>("POST", "/v1/forget/verify"),
   rawCatalog: () => req<RawCatalog>("GET", "/v1/raw/catalog"),

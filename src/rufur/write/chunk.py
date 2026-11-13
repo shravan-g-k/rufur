@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-CHUNK_CHARS = 400
+CHUNK_CHARS = 1200
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[`])|\n+")
 _SOFT_BREAK = re.compile(r"(?<=[,;:])\s+")
@@ -90,23 +90,36 @@ def _bound(text: str, start: int, end: int, max_chars: int) -> list[tuple[int, i
     return spans
 
 
-def is_salient(chunk: str, role: str = "user") -> bool:
-    """Could this chunk state a fact, preference, decision, date, relation, table row, procedure or secret?"""
+def gate_reason(chunk: str, role: str = "user") -> str | None:
+    """Why this chunk can't hold a durable memory, or None if it might (a fact, preference, decision, date,
+    relation, table row, procedure or secret)."""
     c = chunk.strip()
     if len(c) < 12:
-        return False
+        return "too short to state anything"
     if role == "assistant":
-        return bool(ASSISTANT_SALIENT.search(c))
+        return None if ASSISTANT_SALIENT.search(c) else "assistant explanation with no decision in it"
     if not SALIENT.search(c):
-        return False
+        return "no fact, preference, decision, date or procedure in it"
     # "Can you run the tests?" / "fix the bug in main.py": a request, not something to remember.
     if (_QUESTION.search(c) or _REQUEST.match(c)) and not _STATEMENT.search(c):
-        return False
-    return True
+        return "a question or request to the agent, not a statement"
+    return None
+
+
+def is_salient(chunk: str, role: str = "user") -> bool:
+    return gate_reason(chunk, role) is None
 
 
 def salient_chunks(text: str, role: str = "user", max_chars: int = CHUNK_CHARS) -> list[str]:
     return [c for c in split_chunks(text, max_chars) if is_salient(c, role)]
+
+
+def skip_reason(text: str, role: str = "user", max_chars: int = CHUNK_CHARS) -> str | None:
+    """Why no chunk of this message passes the gate, or None if one does."""
+    reasons = [gate_reason(c, role) for c in split_chunks(text, max_chars)] or ["empty message"]
+    if None in reasons:
+        return None
+    return max(set(reasons), key=reasons.count)
 
 
 def detect_sensitivity(text: str) -> str:

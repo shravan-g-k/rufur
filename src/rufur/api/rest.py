@@ -407,7 +407,7 @@ def create_app(service: MemoryService, *, mcp_app=None, mcp_session_manager=None
         return S.dashboard_timeline(a, kind, ident)
 
     @app.get("/v1/dashboard/tokens")
-    def dashboard_tokens(bucket: Literal["hour", "day"] = "hour", _a: str = A):
+    def dashboard_tokens(bucket: Literal["session", "hour"] = "session", _a: str = A):
         return S.dashboard_tokens(bucket)
 
     @app.get("/v1/dashboard/forgetting")

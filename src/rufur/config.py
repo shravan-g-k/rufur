@@ -93,15 +93,24 @@ class Config:
     embed_model: str = "nomic-embed-text"
     embed_dim: int = 768
     llm_timeout_s: float = 120.0
+    # Decision model (Kev) for yes/no and pick-one calls on the write path; "" turns it off and qwen does them.
+    decision_model: str = "kev:4b-q4_K_M"
+    decision_margin: float = 0.4  # below this gap between the top two answers, qwen decides instead
     offline: bool = False  # never call an LLM; extraction stays queued
     roles: dict[str, list[ProviderRef]] = field(default_factory=default_roles)
 
     # Write path
     checkpoint_every: int = 6  # salient unextracted events before a checkpoint extraction
     extract_idle_s: float = 30.0  # a session quiet this long gets its pending events extracted
-    chunk_chars: int = 400  # extraction chunk size; small models read a sentence or two reliably
-    extract_batch_chars: int = 900  # chunks per LLM call
+    # Extraction chunk size. Big enough that a statement keeps its reason and surroundings (at 400 a 7B split
+    # one thought into several context-free triples); small enough that it still reads every chunk.
+    chunk_chars: int = 1200
+    # Characters per LLM call. About one chunk: given two long chunks, a 7B writes rows for the first and drops
+    # the second (seen in the demo: a 1,100 + 800 character batch produced nothing for the second message).
+    extract_batch_chars: int = 1400
     extract_parallel: int = 1  # concurrent extraction calls; raise with OLLAMA_NUM_PARALLEL or for cloud hops
+
+    conflict_radius: float = 0.30  # cosine distance within which an existing memory is checked for a conflict
 
     # Read path
     default_token_budget: int = 800

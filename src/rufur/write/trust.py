@@ -72,7 +72,26 @@ def can_read(clearance: str, sensitivity: str) -> bool:
 
 
 def initial_status(trust: str, flags: list[str]) -> str:
-    """Low-trust and instruction-like memories start quarantined."""
-    if trust == "low" or "instruction_like" in flags:
+    """Low-trust memories start quarantined, and so do instruction-like ones unless the user said them: "from now
+    on always answer in Hindi" is a preference when the user says it and a planted instruction anywhere else.
+    The flag stays on the memory either way."""
+    if trust == "low" or ("instruction_like" in flags and trust != "high"):
         return "quarantined"
     return "active"
+
+
+def hold_reason(trust: str, flags: list[str]) -> str | None:
+    """Why a memory is held for review, in plain words, from its trust and flags."""
+    reasons = []
+    for f in flags:
+        if f == "agent_quarantined":
+            reasons.append("the agent that wrote it is quarantined")
+        elif f == "instruction_like" and trust != "high":
+            reasons.append("it reads like an instruction to an AI and didn't come from the user")
+        elif f.startswith("supersede_needs_confirmation:"):
+            reasons.append(f"it would overwrite a high-trust memory ({f.split(':', 1)[1]}) from a less trusted source")
+        elif f.startswith("conflicts_with:"):
+            reasons.append(f"it contradicts a more trusted or user-confirmed memory ({f.split(':', 1)[1]})")
+    if trust == "low":
+        reasons.append("it came from a low-trust source (tool output or the web)")
+    return "; ".join(reasons) or None

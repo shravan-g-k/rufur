@@ -320,6 +320,45 @@ def test_write_burst_quarantines_agent(cfg):
         svc.close()
 
 
+def test_claims_from_the_users_own_words_dont_trip_the_burst_guard(cfg):
+    cfg.max_writes_per_min = 5
+    svc = make(cfg)
+    try:
+        sid = svc.session_start("claude-code")["session_id"]
+        for city in ("Oslo", "Bergen", "Tromso", "Pune", "Delhi", "Goa", "Agra"):
+            svc.log_event("claude-code", f"I live in {city}", session_id=sid, background=False)
+        svc.session_end("claude-code", sid)
+        assert svc.db.scalar("SELECT count(*) FROM memories WHERE author_agent = 'claude-code'") >= 7
+        assert svc.agent("claude-code")["quarantined"] == 0
+    finally:
+        svc.close()
+
+
+def test_sessions_that_produce_no_memory_are_dropped(cfg):
+    svc = make(cfg)
+    try:
+        silent = svc.session_start("claude-code")["session_id"]
+        svc.session_end("claude-code", silent)
+        chatty = svc.session_start("claude-code")["session_id"]
+        ev = svc.log_event("claude-code", "can you fix my bug?", session_id=chatty)
+        assert ev["skip_reason"] == "a question or request to the agent, not a statement"
+        svc.session_end("claude-code", chatty)
+        useful = svc.session_start("claude-code")["session_id"]
+        svc.log_event("claude-code", "I live in Tromso", session_id=useful)
+        svc.session_end("claude-code", useful)
+        abandoned = svc.session_start("claude-code")["session_id"]  # never ended, never used
+
+        left = {r["id"] for r in svc.db.all("SELECT id FROM sessions")}
+        assert silent not in left and chatty not in left and useful in left and abandoned in left
+        # The transcript survives without its session.
+        assert svc.db.scalar("SELECT session_id FROM events WHERE id = ?", (ev["event_id"],)) is None
+        advance(25)
+        svc.sweep()
+        assert abandoned not in {r["id"] for r in svc.db.all("SELECT id FROM sessions")}
+    finally:
+        svc.close()
+
+
 def test_independent_corroboration_counts(cfg):
     svc = make(cfg)
     try:

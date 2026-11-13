@@ -38,7 +38,7 @@ from .write import consolidate as consolidate_mod
 from .write import resolve as resolve_mod
 from .write import review as review_mod
 from .textutil import estimate_tokens, new_id, now, quote_in, sha256
-from .write.chunk import at_least, detect_sensitivity, salient_chunks
+from .write.chunk import at_least, detect_sensitivity, skip_reason
 from .write.extract import extract_claims
 from .write.importance import retention_score
 from .write.pipeline import ClaimIn, WritePath
@@ -134,7 +134,8 @@ class MemoryService:
         self.db.execute("UPDATE agents SET quarantined = 1 WHERE name = ?", (name,))
         rows = self.db.all("SELECT id FROM memories WHERE author_agent = ? AND status IN ('active','disputed')", (name,))
         for r in rows:
-            self.ledger.update_memory(r["id"], status="quarantined")
+            self.ledger.update_memory(r["id"], status="quarantined",
+                                      status_reason=f"the agent that wrote it ({name}) was quarantined by {actor}")  # fmt: skip
             self.ledger.op("quarantine", r["id"], actor, {"reason": "agent_quarantined"})
         self.ledger.audit(actor, "agent.quarantine", name, {"memories": len(rows)})
         return {"agent": name, "quarantined_memories": len(rows)}
@@ -268,10 +269,10 @@ class MemoryService:
                                    source_type=source_type or ROLE_SOURCE.get(role, "tool"),
                                    content=content, session_id=session_id)  # fmt: skip
         checkpoint = False
-        if not self._worth_extracting(ev, session_id):
+        if reason := self._skip_reason(ev, session_id):
             # Chit-chat, requests and repeats never reach a model; they stay in the transcript only.
-            self.db.execute("UPDATE events SET extracted = 1 WHERE id = ?", (ev["id"],))
-            return {"event_id": ev["id"], "checkpoint": False, "skipped": True}
+            self.db.execute("UPDATE events SET extracted = 1, skip_reason = ? WHERE id = ?", (reason, ev["id"]))
+            return {"event_id": ev["id"], "checkpoint": False, "skipped": True, "skip_reason": reason}
         if session_id:
             pending = self.db.scalar("SELECT count(*) FROM events WHERE session_id = ? AND extracted = 0", (session_id,))
             if pending >= self.cfg.checkpoint_every:
@@ -279,15 +280,16 @@ class MemoryService:
                 self._run(background, self.extract_session, session_id)
         return {"event_id": ev["id"], "checkpoint": checkpoint}
 
-    def _worth_extracting(self, ev: dict, session_id: str | None) -> bool:
-        if not salient_chunks(ev["content"], ev["role"], self.cfg.chunk_chars):
-            return False
+    def _skip_reason(self, ev: dict, session_id: str | None) -> str | None:
+        """Why this message isn't worth a model call, or None if it is."""
+        if reason := skip_reason(ev["content"], ev["role"], self.cfg.chunk_chars):
+            return reason
         if session_id and self.db.scalar(
             "SELECT 1 FROM events WHERE session_id = ? AND content_hash = ? AND id != ? LIMIT 1",
             (session_id, ev["content_hash"], ev["id"]),
         ):
-            return False
-        return True
+            return "repeat of an earlier message in this session"
+        return None
 
     def warm(self) -> None:
         """Load the embedder and fast reranker now, so the first hook of a session isn't the one that pays for it."""
@@ -356,6 +358,21 @@ class MemoryService:
             results.append(self._settle(res.summary()))
         marks = ",".join("?" * len(events))
         self.db.execute(f"UPDATE events SET extracted = 1 WHERE id IN ({marks})", tuple(e["id"] for e in events))
+        # Say why a message that reached the model left nothing in short-term memory.
+        outcomes: dict[str, list[str]] = {}
+        for (_claim, ev), r in zip(accepted, results):
+            outcomes.setdefault(ev["id"], []).append(r["outcome"])
+        for ev in events:
+            got = outcomes.get(ev["id"], [])
+            if "created" in got or "corroborated" in got:
+                continue
+            if not got:
+                reason = "the model found nothing durable in it"
+            elif "tombstoned" in got:
+                reason = "it repeats something you asked to forget"
+            else:
+                reason = "already in memory (counted as a duplicate)"
+            self.db.execute("UPDATE events SET skip_reason = ? WHERE id = ?", (reason, ev["id"]))
         self.ledger.metric("extract", (time.perf_counter() - started) * 1000, path=usage.model if usage else "gated",
                            agent=s["agent"], tokens_in=sum(estimate_tokens(e["content"]) for e in events),
                            llm_tokens=usage.tokens_in + usage.tokens_out if usage else 0,
@@ -381,7 +398,30 @@ class MemoryService:
         self.ledger.audit(self._session(session_id)["agent"], "session.end", session_id,
                           {"stored": extraction.get("stored", 0)})  # fmt: skip
         self.bus.publish("session.ended", id=session_id, stored=extraction.get("stored", 0))
-        return {"session_id": session_id, "extraction": extraction}
+        dropped = self.drop_if_empty(session_id)
+        return {"session_id": session_id, "extraction": extraction, "dropped_empty": dropped}
+
+    def drop_if_empty(self, session_id: str, *, abandoned: bool = False) -> bool:
+        """Delete a session that never produced a memory. Every Claude Code start, /clear or one-off `claude -p`
+        opens one (the SessionStart hook needs it to preload memory), so most short ones end up empty.
+        Its messages stay as unsessioned events: the daily journal and recall_past still read them.
+        `abandoned` lets the sweeper drop a session that was never ended."""
+        s = self.db.one("SELECT * FROM sessions WHERE id = ?", (session_id,))
+        if s is None or not (s["ended_at"] or abandoned):
+            return False
+        keep = self.db.scalar(
+            "SELECT 1 WHERE EXISTS (SELECT 1 FROM memories WHERE session_id = :s)"
+            " OR EXISTS (SELECT 1 FROM ops WHERE op = 'create' AND json_extract(payload, '$.session') = :s)"
+            " OR EXISTS (SELECT 1 FROM pools WHERE owner_session = :s)"
+            " OR EXISTS (SELECT 1 FROM events WHERE session_id = :s AND extracted = 0)",  # extraction still pending
+            {"s": session_id},
+        )
+        if keep:
+            return False
+        self.db.execute("UPDATE events SET session_id = NULL WHERE session_id = ?", (session_id,))
+        self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        self.ledger.audit(s["agent"], "session.dropped_empty", session_id)
+        return True
 
     # ---------------------------------------------------------------- writes
 
@@ -1052,7 +1092,10 @@ class MemoryService:
         a = self.agent(agent)
         if a["quarantined"] or agent == "ui":
             return
-        recent = self.db.scalar("SELECT count(*) FROM memories WHERE author_agent = ? AND created_at > ?", (agent, now() - 60))
+        # Claims extracted from the user's own messages don't count: one pasted page legitimately yields dozens,
+        # and that burst is what quarantined the user's main agent and held everything it wrote afterwards.
+        recent = self.db.scalar("SELECT count(*) FROM memories WHERE author_agent = ? AND created_at > ? "
+                                "AND source_type != 'user'", (agent, now() - 60))  # fmt: skip
         overrides = self.db.scalar(
             "SELECT count(*) FROM memories WHERE author_agent = ? AND created_at > ? "
             "AND (flags LIKE '%supersede_needs_confirmation%' OR flags LIKE '%conflicts_with%')",
@@ -1192,7 +1235,7 @@ class MemoryService:
         except LookupError as e:
             raise NotFound(str(e)) from e
 
-    def dashboard_tokens(self, bucket: str = "hour") -> dict:
+    def dashboard_tokens(self, bucket: str = "session") -> dict:
         return dash_mod.tokens(self, bucket)
 
     def dashboard_forgetting(self, agent: str) -> dict:

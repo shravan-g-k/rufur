@@ -126,3 +126,14 @@ def test_rows_become_typed_claims_with_code_built_text(cfg):
     assert by["preferred theme"].text == "The user's preferred theme is dark mode."
     assert by["age"].type == "fact" and by["age"].value == "27"
     assert len(rejected) == 2
+
+
+def test_long_rows_from_a_small_model_keep_their_value():
+    from rufur.write.extract import _parse_row
+
+    key = _parse_row([0, "fact", "user", "project", "name", "Ledgerly"], 1)
+    assert (key.predicate, key.value) == ("project name", "Ledgerly")
+    secret = _parse_row([0, "fact", "user", "payment gateway", "test API key", "rzp_test_x", "restricted"], 1)
+    assert (secret.value, secret.sensitivity) == ("rzp_test_x", "restricted")
+    record = _parse_row([0, "fact", "customer", "name", "Sunrise Clinic", "plan", "Pro"], 1)
+    assert (record.type, record.predicate, record.value) == ("table", "customer", "name=Sunrise Clinic; plan=Pro")

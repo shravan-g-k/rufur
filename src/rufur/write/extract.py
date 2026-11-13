@@ -70,12 +70,32 @@ class FlatExtraction(BaseModel):
         description="rows of [chunk, type, subject, predicate, value], optionally a sixth item: sensitivity")
 
 
+SENSITIVITIES = ("public", "internal", "confidential", "restricted")
+
+
 def _parse_row(row: list[str | int], batch_len: int) -> FlatClaim | None:
+    """A row is [chunk, type, subject, predicate, value(, sensitivity)], but a 7B often writes longer ones, and
+    reading only the first five cells turned [.., "user", "project", "name", "Ledgerly"] into "the user's project
+    is name". Two longer shapes are understood:
+    - a compound key, value last: [.., subject, "project", "name", "Ledgerly"] -> predicate "project name";
+    - a record, key/value pairs: [.., "customer", "name", "Sunrise Clinic", "plan", "Pro"] -> a table row.
+    """
     cells = [str(c).strip() for c in row]
     if len(cells) < 5 or not cells[0].lstrip("-").isdigit():
         return None
-    chunk, type_, subject, predicate, value = int(cells[0]), cells[1].lower(), *cells[2:5]
-    sensitivity = cells[5].lower() if len(cells) > 5 and cells[5].lower() in ("public", "internal", "confidential", "restricted") else "internal"
+    sensitivity = "internal"
+    if len(cells) > 5 and cells[-1].lower() == "sensitivity":  # the column name, written instead of a value
+        cells.pop()
+    if len(cells) > 5 and cells[-1].lower() in SENSITIVITIES:
+        sensitivity = cells.pop().lower()
+    chunk, type_, subject, tail = int(cells[0]), cells[1].lower(), cells[2], cells[3:]
+    if len(tail) == 2:
+        predicate, value = tail
+    elif len(tail) % 2 == 0:
+        pairs = dict(zip(tail[::2], tail[1::2]))
+        type_, predicate, value = "table", subject, "; ".join(f"{k}={v}" for k, v in pairs.items() if k and v)
+    else:
+        predicate, value = " ".join(tail[:-1]), tail[-1]
     if not (0 <= chunk < batch_len and subject and predicate and value):
         return None
     if type_ not in MemoryType.__args__:
@@ -87,7 +107,12 @@ SYSTEM = """You extract durable memories from short chunks of an agent's convers
 
 Each chunk is <chunk index="N" role="...">text</chunk>. Return one row per fact worth remembering across
 sessions: user facts and preferences, decisions and their reasons, project facts, deadlines, relationships,
-table records, procedures. Skip anything unsure, hypothetical, or a question.
+table records, procedures. Skip anything unsure, hypothetical, or a question, and skip one-off requests and
+complaints about the task at hand ("make the chunks bigger", "find out why X"). A standing rule for how to work
+("from now on answer with the file path first", "never deploy on Fridays") IS a preference: keep it.
+Keep one statement in one row: put the reason, condition or detail in the value ("Postgres, because it has
+row-level security") rather than splitting it into several rows. A list of steps is one procedure row, not
+one row per step. Fewer complete rows beat many fragments.
 
 Each row is [chunk, type, subject, predicate, value], optionally followed by sensitivity.
 - chunk: the chunk's index (a number).
@@ -191,7 +216,7 @@ def extract_claims(llm: LLM, events: list[dict], *, gate: bool = True) -> tuple[
     batches = _batches(chunks, cfg.extract_batch_chars)
 
     def run(batch):
-        return llm.complete("extract", SYSTEM, render_chunks(batch), FlatExtraction, accept=_well_formed(len(batch)), num_predict=1024)
+        return llm.complete("extract", SYSTEM, render_chunks(batch), FlatExtraction, accept=_well_formed(len(batch)), num_predict=1536)
 
     if len(batches) == 1:
         outputs = [run(batches[0])]

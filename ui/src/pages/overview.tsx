@@ -9,18 +9,34 @@ import { Dot, TtlBar } from "@/components/memory-ui";
 import { TokenChart } from "@/pages/tokens";
 import { api, CompositionKey, Forgetting, Memory, Sessions, since, STORE_LABEL, Tokens } from "@/api";
 
-// Every bucket a memory can be in, so the stacks add up to everything the session ever created.
+// Five groups, so the stacks still add up to everything the session ever created but stay readable.
+// The memory sheet and the Review / Forgetting pages keep the fine-grained status.
 const COMPOSITION_CONFIG = {
   ltm: { label: "Long-term", color: "var(--chart-1)" },
   stm: { label: "Short-term", color: "var(--chart-2)" },
-  disputed: { label: "Disputed", color: "oklch(0.86 0.17 95)" },
-  held: { label: "Held", color: "oklch(0.62 0.22 350)" },
-  fading: { label: "Fading", color: "oklch(0.75 0.06 200)" },
-  superseded: { label: "Replaced", color: "var(--chart-3)" },
-  expired: { label: "Expired", color: "var(--chart-4)" },
-  rejected: { label: "Rejected", color: "oklch(0.6 0.02 260)" },
-  forgotten: { label: "Forgotten", color: "var(--chart-5)" },
+  review: { label: "Needs review", color: "oklch(0.62 0.22 350)" },
+  history: { label: "Replaced", color: "var(--chart-3)" },
+  gone: { label: "Gone", color: "var(--chart-4)" },
 } satisfies ChartConfig;
+type CompositionGroup = keyof typeof COMPOSITION_CONFIG;
+const GROUPS = Object.keys(COMPOSITION_CONFIG) as CompositionGroup[];
+const GROUP_OF: Record<CompositionKey, CompositionGroup> = {
+  ltm: "ltm",
+  stm: "stm",
+  held: "review", // quarantined: waiting on the reviewer or the user
+  disputed: "review", // a conflict nobody has settled yet
+  superseded: "history", // an older version, kept so "what was it before" works
+  fading: "gone", // unused long-term memory on its way out (a recall brings it back)
+  expired: "gone",
+  rejected: "gone",
+  forgotten: "gone",
+};
+
+function grouped(c: Record<CompositionKey, number>): Record<CompositionGroup, number> {
+  const out = Object.fromEntries(GROUPS.map((g) => [g, 0])) as Record<CompositionGroup, number>;
+  for (const [k, n] of Object.entries(c) as [CompositionKey, number][]) out[GROUP_OF[k]] += n;
+  return out;
+}
 
 // What backs each long-term store, so the dashboard says how knowledge is kept, not just how much.
 const STORE_BACKING: Record<string, string> = {
@@ -53,7 +69,7 @@ export function OverviewPage({
   const [filed, setFiled] = useState<string | null>(null);
 
   useEffect(() => {
-    api.tokens("hour").then(setTokens);
+    api.tokens("session").then(setTokens);
     api.forgetting().then(setForgetting);
     api.memories("?tier=stm&status=active&limit=200").then(setStm);
     api.stmStats().then(setStmStats);
@@ -97,9 +113,9 @@ export function OverviewPage({
       id: s.id,
       tick: `${s.agent} ${new Date(s.started_at * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`,
       label: `${s.agent} · ${since(s.started_at)}`,
-      ...s.composition,
+      ...grouped(s.composition),
     }));
-  const empty = composition.filter((c) => (Object.keys(COMPOSITION_CONFIG) as CompositionKey[]).every((k) => !c[k])).length;
+  const empty = composition.filter((c) => GROUPS.every((k) => !c[k])).length;
   const st = t.storage;
 
   return (
@@ -131,11 +147,11 @@ export function OverviewPage({
         <Card className="xl:col-span-3">
           <CardHeader>
             <CardTitle>Token usage</CardTitle>
-            <CardDescription>Per operation, hourly over the last 7 days.</CardDescription>
+            <CardDescription>Per operation, one bar per working session (a new one after 20 quiet minutes), last 7 days.</CardDescription>
           </CardHeader>
           <CardContent>
             {tokens?.series.length ? (
-              <TokenChart data={tokens} bucket="hour" height="h-64" />
+              <TokenChart data={tokens} height="h-64" />
             ) : (
               <p className="text-muted-foreground text-sm">No operations yet.</p>
             )}
@@ -206,7 +222,7 @@ export function OverviewPage({
                   )}
                 />
                 <ChartLegend content={<ChartLegendContent />} />
-                {(Object.keys(COMPOSITION_CONFIG) as CompositionKey[]).map((k) => (
+                {GROUPS.map((k) => (
                   <Bar
                     key={k}
                     dataKey={k}

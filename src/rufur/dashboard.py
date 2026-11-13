@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 UNATTACHED = "unattached"
 MEMORY_COLS = ("id, text, type, tier, status, store, trust, sensitivity, created_at, updated_at, expires_at, "
-               "access_count, last_accessed, pool_id, session_id, author_agent, flags")  # fmt: skip
+               "access_count, last_accessed, pool_id, session_id, author_agent, flags, status_reason")  # fmt: skip
 
 
 def _user_agents(svc: "MemoryService", agent: str) -> list[str]:
@@ -280,18 +280,42 @@ def timeline(svc: "MemoryService", agent: str, kind: str, ident: str) -> dict:
     return {"events": events, "series": series}
 
 
-def tokens(svc: "MemoryService", bucket: str = "hour", since: float | None = None) -> dict:
-    size = 86400 if bucket == "day" else 3600
-    since = since if since is not None else now() - (30 * 86400 if bucket == "day" else 7 * 86400)
+ACTIVITY_GAP_S = 20 * 60  # a quiet spell this long starts a new activity session on the token timeline
+
+
+def _empty_bucket() -> dict:
+    return {"recall": 0, "remember": 0, "extract": 0, "forget": 0, "llm": 0, "served": 0}
+
+
+def tokens(svc: "MemoryService", bucket: str = "session", since: float | None = None) -> dict:
+    """Token use over time. `session` groups operations into bursts of activity (a new one after 20 quiet
+    minutes, whichever agent is working); `hour` is a continuous hourly line over the last two days."""
+    since = since if since is not None else now() - (7 * 86400 if bucket == "session" else 2 * 86400)
     rows = svc.db.all(
-        "SELECT op, agent, tokens_in, tokens_out, llm_tokens, created_at FROM metrics WHERE created_at >= ? ORDER BY id",
+        "SELECT op, agent, tokens_in, tokens_out, llm_tokens, created_at FROM metrics WHERE created_at >= ? ORDER BY created_at",
         (since,),
     )
     buckets: dict[float, dict] = {}
+    if bucket == "hour":  # every hour gets a point, so a quiet hour reads as zero rather than a line across it
+        h = (since // 3600) * 3600
+        while h <= now():
+            buckets[h] = _empty_bucket()
+            h += 3600
     by_agent: dict[str, dict] = defaultdict(lambda: {"calls": 0, "tokens_in": 0, "tokens_out": 0, "llm_tokens": 0})
+    start = last = None
     for r in rows:
-        b = buckets.setdefault((r["created_at"] // size) * size, {"recall": 0, "remember": 0, "extract": 0, "forget": 0,
-                                                                   "llm": 0, "served": 0})  # fmt: skip
+        if bucket == "session":
+            if last is None or r["created_at"] - last > ACTIVITY_GAP_S:
+                start = r["created_at"]
+                buckets[start] = _empty_bucket() | {"end": start, "calls": 0, "agents": []}
+            last = r["created_at"]
+            b = buckets[start]
+            b["end"] = last
+            b["calls"] += 1
+            if (name := r["agent"] or "system") not in b["agents"]:
+                b["agents"].append(name)
+        else:
+            b = buckets.setdefault((r["created_at"] // 3600) * 3600, _empty_bucket())
         b[r["op"]] = b.get(r["op"], 0) + r["tokens_in"] + r["tokens_out"] + r["llm_tokens"]
         b["llm"] += r["llm_tokens"]
         b["served"] += r["tokens_out"]
