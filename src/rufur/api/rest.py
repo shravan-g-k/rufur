@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -60,6 +60,7 @@ class RememberIn(BaseModel):
     pinned: bool = False
     session_id: str | None = None
     long_term: bool = False
+    wait: bool = True  # false: return at once and structure the text in the background
 
 
 class RecallIn(BaseModel):
@@ -388,6 +389,35 @@ def create_app(service: MemoryService, *, mcp_app=None, mcp_session_manager=None
     @app.get("/v1/audit")
     def audit(limit: int = 200, _a: str = A):
         return S.audit_log(limit)
+
+    @app.get("/v1/dashboard/sessions")
+    def dashboard_sessions(a: str = A):
+        return S.dashboard_sessions(a)
+
+    @app.get("/v1/dashboard/{kind}/{ident}/memories")
+    def dashboard_memories(kind: Literal["session", "scratch", "unsessioned"], ident: str, a: str = A):
+        return S.dashboard_memories(a, kind, ident)
+
+    @app.get("/v1/dashboard/{kind}/{ident}/timeline")
+    def dashboard_timeline(kind: Literal["session", "scratch"], ident: str, a: str = A):
+        return S.dashboard_timeline(a, kind, ident)
+
+    @app.get("/v1/dashboard/tokens")
+    def dashboard_tokens(bucket: Literal["hour", "day"] = "hour", _a: str = A):
+        return S.dashboard_tokens(bucket)
+
+    @app.get("/v1/dashboard/forgetting")
+    def dashboard_forgetting(a: str = A):
+        return S.dashboard_forgetting(a)
+
+    @app.get("/v1/raw/catalog")
+    def raw_catalog(a: str = A):
+        return S.raw_catalog(a)
+
+    @app.get("/v1/raw/tables/{table}")
+    def raw_rows(table: str, limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0),
+                 column: str | None = None, value: str | None = None, desc: bool = False, a: str = A):  # fmt: skip
+        return S.raw_rows(a, table, limit=limit, offset=offset, column=column, value=value, desc=desc)
 
     @app.post("/v1/maintenance/auto-forget")
     def auto_forget(a: str = A):

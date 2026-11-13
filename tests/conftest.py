@@ -15,22 +15,18 @@ def fake_handler(role: str, prompt: str):
     if role == "extract":
         claims = []
         for line in prompt.splitlines():
-            m = re.match(r'<event index="(\d+)" role="(\w+)">(.*)</event>', line)
+            m = re.match(r'<chunk index="(\d+)" role="(\w+)">(.*)</chunk>', line)
             if not m:
                 continue
             idx, content = int(m.group(1)), m.group(3)
             if city := re.search(r"I live in (\w+)", content):
-                claims.append(dict(event=idx, type="fact", subject="user", predicate="home city", value=city.group(1),
-                                   text=f"The user lives in {city.group(1)}.", quote=city.group(0)))
+                claims.append([idx, "fact", "user", "home city", city.group(1)])
             if city := re.search(r"moved to (\w+)", content):
-                claims.append(dict(event=idx, type="fact", subject="user", predicate="home city", value=city.group(1),
-                                   text=f"The user moved to {city.group(1)}.", quote=city.group(0)))
+                claims.append([idx, "fact", "user", "home city", city.group(1)])
             if "HALLUCINATE" in content:
-                claims.append(dict(event=idx, type="fact", subject="user", predicate="pet", value="dragon",
-                                   text="The user owns a dragon.", quote="I have a pet dragon"))
+                claims.append([idx + 99, "fact", "user", "pet", "dragon"])
             if ed := re.search(r"I prefer (\w+) for editing", content):
-                claims.append(dict(event=idx, type="preference", subject="user", predicate="preferred editor",
-                                   value=ed.group(1), text=f"The user prefers {ed.group(1)} for editing.", quote=ed.group(0)))
+                claims.append([idx, "preference", "user", "preferred editor", ed.group(1)])
         return {"claims": claims}
     if role == "classify" and prompt.startswith("A: "):  # same-attribute check: "A: subject / attribute / value"
         a, b = (line.split(" / ")[1] for line in prompt.splitlines()[:2])

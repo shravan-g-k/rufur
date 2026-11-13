@@ -92,7 +92,11 @@ class Config:
     roles: dict[str, list[ProviderRef]] = field(default_factory=default_roles)
 
     # Write path
-    checkpoint_every: int = 8  # unextracted events before a checkpoint extraction
+    checkpoint_every: int = 6  # salient unextracted events before a checkpoint extraction
+    extract_idle_s: float = 30.0  # a session quiet this long gets its pending events extracted
+    chunk_chars: int = 400  # extraction chunk size; small models read a sentence or two reliably
+    extract_batch_chars: int = 900  # chunks per LLM call
+    extract_parallel: int = 1  # concurrent extraction calls; raise with OLLAMA_NUM_PARALLEL or for cloud hops
 
     # Read path
     default_token_budget: int = 800

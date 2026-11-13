@@ -185,7 +185,8 @@ class WritePath:
             (self.db.scalar("SELECT content FROM events WHERE id = ?", (eid,)) or q) for eid, q in sources
         )
         for existing, how in candidates:
-            verdict, tokens = conflict.classify(self.llm, existing, claim.text, how, claim.value, evidence, claim.subject, claim.predicate)
+            verdict, tokens = conflict.classify(self.llm, existing, claim.text, how, claim.value, evidence, claim.subject,
+                                                claim.predicate, source_quote=" ".join(q for _, q in sources)[:500])  # fmt: skip
             llm_tokens += tokens
             if verdict.outcome == "duplicate":
                 return self._corroborate(existing, claim, agent, source_type, trust, sources, llm_tokens)

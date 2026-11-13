@@ -120,13 +120,15 @@ def build_mcp(backend: Backend, *, default_agent: str = "claude-code", resolve_k
                  subject: str = "", predicate: str = "", value: str = "",
                  source: Literal["user", "document", "agent", "tool", "web"] = "agent", pool: str | None = None,
                  sensitivity: Literal["public", "internal", "confidential", "restricted"] = "internal",
-                 pinned: bool = False, session_id: str | None = None, long_term: bool = False) -> dict:  # fmt: skip
+                 pinned: bool = False, session_id: str | None = None, long_term: bool = False,
+                 wait: bool = False) -> dict:  # fmt: skip
         """Store a memory (short-term first; consolidation files it long-term). Leave subject/predicate empty to
-        let RUFUR structure the text. Use source="user" for things the user told you, "document"/"tool"/"web" for
+        let RUFUR structure the text; that happens in the background and the call returns at once (wait=true blocks
+        for the result). Call this once per finished task or decision with everything worth keeping, not per message. Use source="user" for things the user told you, "document"/"tool"/"web" for
         content from those. long_term=true files it into long-term storage immediately."""
         return backend.call("remember", who(ctx), text=text, type=type, subject=subject, predicate=predicate, value=value,
                             source=source, pool=pool, sensitivity=sensitivity, pinned=pinned, session_id=session_id,
-                            long_term=long_term)  # fmt: skip
+                            long_term=long_term, wait=wait)  # fmt: skip
 
     @mcp.tool()
     def recall(query: str, ctx: Context, token_budget: int | None = None, pool: str | None = None,

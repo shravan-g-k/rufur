@@ -129,11 +129,17 @@ def find_candidates(db: Database, pool_ids: list[str], subject: str, predicate: 
 
 
 def classify(llm: LLM, existing: dict, new_text: str, how: str, new_value: str, evidence: str = "",
-             new_subject: str = "", new_predicate: str = "") -> tuple[Verdict, int]:  # fmt: skip
+             new_subject: str = "", new_predicate: str = "", source_quote: str = "") -> tuple[Verdict, int]:  # fmt: skip
     """Returns (verdict, llm tokens used). `evidence` is the raw source text behind the new claim."""
     if how == "key" and norm_key(existing["value"]) == norm_key(new_value):
         return Verdict(outcome="duplicate", reason="same key and value"), 0
+    if norm_key(existing["text"]) == norm_key(new_text):
+        return Verdict(outcome="duplicate", reason="same text"), 0
     prompt = f"EXISTING ({existing['source_type']}, trust {existing['trust']}): {existing['text']}\nNEW: {new_text}"
+    source = source_quote or evidence[:500]
+    if source and norm_key(source) != norm_key(new_text):
+        # The claim's wording is built from its fields and drops cues like "moved" or "actually"; the source keeps them.
+        prompt += f"\nNEW SOURCE: {source}"
     try:
         verdict, usage = llm.complete("classify", SYSTEM, prompt, Verdict)
         tokens = usage.tokens_in + usage.tokens_out

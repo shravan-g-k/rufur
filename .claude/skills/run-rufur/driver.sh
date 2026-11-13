@@ -5,7 +5,7 @@
 #   driver.sh up [--live]        start a fresh daemon (offline: hash embedder, no LLM; --live: real Ollama models)
 #   driver.sh smoke              REST + MCP round trip; exits non-zero on the first failed check
 #   driver.sh api METHOD PATH [JSON] [AGENT]   one raw request (AGENT defaults to claude-code)
-#   driver.sh shot [VIEW ...]    screenshot UI views (brain timeline review agents usage) to $RUFUR_SHOTS
+#   driver.sh shot [VIEW ...]    screenshot UI views (overview sessions tokens forgetting review agents) to $RUFUR_SHOTS
 #   driver.sh down               stop the daemon
 #
 # Env: RUFUR_HOME (default $TMPDIR/rufur-run), RUFUR_PORT (default 7600), RUFUR_SHOTS (default $RUFUR_HOME/shots)
@@ -67,7 +67,7 @@ case "${1:-}" in
     echo "smoke passed against $B"
     ;;
   api) shift; api "$@"; echo ;;
-  shot) shift; uv run --no-project --with playwright python "$HERE/shot.py" "$B" "$RUFUR_SHOTS" "${@:-brain}" ;;
+  shot) shift; uv run --no-project --with playwright python "$HERE/shot.py" "$B" "$RUFUR_SHOTS" "${@:-overview}" ;;
   down) uv run rufur stop ;;
   *) sed -n 2,12p "$0"; exit 2 ;;
 esac

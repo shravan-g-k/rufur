@@ -49,8 +49,9 @@ const textOf = (content: unknown): string =>
       : ""
 
 const note = (sid: string) =>
-  `RUFUR memory is active (RUFUR session ${sid}). Relevant memories are added to your context automatically. ` +
-  `For more, or to save decisions, resolve conflicts, delegate to subagents or forget, load the rufur-memory skill.`
+  `RUFUR memory is active (RUFUR session ${sid}). Everything the user says is captured and remembered automatically, and ` +
+  `relevant memories are added to your context, so you do not need to save the user's own words. ` +
+  `For more, or to save a conclusion once a task is done, resolve conflicts, delegate to subagents or forget, load the rufur-memory skill.`
 
 export default function (pi: ExtensionAPI) {
   let rufur: string | undefined // RUFUR session id for the current pi session

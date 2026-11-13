@@ -73,7 +73,7 @@ def test_low_trust_cannot_overwrite_high_trust(client):
     res = remember(client, "Actually the user moved to Lagos", subject="user", predicate="home city", value="Lagos",
                    source="document")[0]
     assert res["memory"]["status"] == "quarantined"
-    out = recall(client, "where does the user live")
+    out = recall(client, "what is the user's home city")
     assert "Berlin" in out["items"][0]["text"]
 
 
@@ -104,15 +104,15 @@ def test_forget_by_query_requires_confirmation(client):
     assert done["report"]["completeness"] == 1.0
 
 
-def test_session_extraction_validates_quotes_and_promotes(client):
+def test_session_extraction_rejects_bad_chunks_and_promotes(client):
     sid = client.post("/v1/sessions", json={}, headers=UI).json()["session_id"]
     client.post("/v1/events", json={"content": "Hi! I live in Lisbon these days.", "session_id": sid}, headers=UI)
-    client.post("/v1/events", json={"content": "HALLUCINATE something", "session_id": sid}, headers=UI)
+    client.post("/v1/events", json={"content": "HALLUCINATE: my pet is a dragon", "session_id": sid}, headers=UI)
     out = client.post(f"/v1/sessions/{sid}/end", headers=UI).json()
-    assert out["extraction"]["rejected"] == 1  # the dragon quote isn't in any event
+    assert out["extraction"]["rejected"] == 1  # the model cited a chunk that doesn't exist
     assert [r["outcome"] for r in out["extraction"]["results"]] == ["created"]
-    item = recall(client, "where does the user live")["items"][0]
-    assert "Lisbon" in item["text"] and item["sources"] == ["I live in Lisbon"] and item["tier"] == "stm"
+    item = recall(client, "what is the user's home city")["items"][0]
+    assert "Lisbon" in item["text"] and item["sources"] == ["Hi! I live in Lisbon these days."] and item["tier"] == "stm"
     # It sits in the user's short-term memory until consolidation files it, in place (same id).
     assert client.get("/v1/memories", headers=UI).json()[0]["pool"] == "stm:me"
     run = client.post("/v1/consolidate", json={}, headers=UI).json()

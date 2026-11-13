@@ -8,8 +8,10 @@ first; access control is applied here, before any search or write.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import secrets
+import threading
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -30,14 +32,18 @@ from .read.rerank import RerankUnavailable, make_reranker
 from .read.search import Filter
 from .read.verify import make_verifier
 from .read import working_set as ws_mod
-from . import pools as pools_mod, stm as stm_mod
+from . import dashboard as dash_mod, pools as pools_mod, raw as raw_mod, stm as stm_mod
 from .write import consolidate as consolidate_mod
 from .write import resolve as resolve_mod
 from .textutil import estimate_tokens, new_id, now, quote_in, sha256
+from .write.chunk import at_least, detect_sensitivity, salient_chunks
 from .write.extract import extract_claims
 from .write.importance import retention_score
 from .write.pipeline import ClaimIn, WritePath
 from .write.trust import ROLE_SOURCE, SENSITIVITY_ORDER, TRUST_ORDER
+
+
+log = logging.getLogger("rufur.service")
 
 
 class AccessDenied(PermissionError):
@@ -74,6 +80,8 @@ class MemoryService:
         self.deep_reranker = make_reranker(cfg, cfg.deep_reranker)
         self.working_sets = ws_mod.WorkingSets()
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rufur-extract")
+        self._idle_queued: set[str] = set()
+        self._idle_lock = threading.Lock()
         self._check_embedder()
         self.ensure_pool(cfg.default_pool, owner=None, description="Default long-term pool")
         self.stm_pool(cfg.default_user)
@@ -258,12 +266,65 @@ class MemoryService:
                                    source_type=source_type or ROLE_SOURCE.get(role, "tool"),
                                    content=content, session_id=session_id)  # fmt: skip
         checkpoint = False
+        if not self._worth_extracting(ev, session_id):
+            # Chit-chat, requests and repeats never reach a model; they stay in the transcript only.
+            self.db.execute("UPDATE events SET extracted = 1 WHERE id = ?", (ev["id"],))
+            return {"event_id": ev["id"], "checkpoint": False, "skipped": True}
         if session_id:
             pending = self.db.scalar("SELECT count(*) FROM events WHERE session_id = ? AND extracted = 0", (session_id,))
             if pending >= self.cfg.checkpoint_every:
                 checkpoint = True
                 self._run(background, self.extract_session, session_id)
         return {"event_id": ev["id"], "checkpoint": checkpoint}
+
+    def _worth_extracting(self, ev: dict, session_id: str | None) -> bool:
+        if not salient_chunks(ev["content"], ev["role"], self.cfg.chunk_chars):
+            return False
+        if session_id and self.db.scalar(
+            "SELECT 1 FROM events WHERE session_id = ? AND content_hash = ? AND id != ? LIMIT 1",
+            (session_id, ev["content_hash"], ev["id"]),
+        ):
+            return False
+        return True
+
+    def warm(self) -> None:
+        """Load the embedder and fast reranker now, so the first hook of a session isn't the one that pays for it."""
+        def load() -> None:
+            for fn in (lambda: self.embedder.embed(["warm up"]),
+                       lambda: self.fast_reranker is not None and self.fast_reranker.score("warm up", ["warm up"])):  # fmt: skip
+                try:
+                    fn()
+                except Exception:  # warming is best effort; the first real call retries
+                    pass
+
+        threading.Thread(target=load, name="rufur-warm", daemon=True).start()
+
+    def extract_idle_sessions(self) -> int:
+        """Sessions that went quiet get their pending events extracted without waiting for a full checkpoint."""
+        rows = self.db.all(
+            "SELECT e.session_id FROM events e JOIN sessions s ON s.id = e.session_id "
+            "WHERE e.extracted = 0 AND s.ended_at IS NULL GROUP BY e.session_id HAVING max(e.created_at) < ?",
+            (now() - self.cfg.extract_idle_s,),
+        )
+        queued = 0
+        for r in rows:
+            sid = r["session_id"]
+            with self._idle_lock:
+                if sid in self._idle_queued:  # still waiting for (or running) the last tick's job
+                    continue
+                self._idle_queued.add(sid)
+            self.worker.submit(self._extract_idle, sid)
+            queued += 1
+        return queued
+
+    def _extract_idle(self, session_id: str) -> None:
+        try:
+            self.extract_session(session_id)
+        except Exception:  # a broken session must not kill the worker; the next quiet period retries
+            log.exception("idle extraction failed for %s", session_id)
+        finally:
+            with self._idle_lock:
+                self._idle_queued.discard(session_id)
 
     def _run(self, background: bool, fn, *args):
         if background:
@@ -293,14 +354,14 @@ class MemoryService:
             results.append(self._settle(res.summary()))
         marks = ",".join("?" * len(events))
         self.db.execute(f"UPDATE events SET extracted = 1 WHERE id IN ({marks})", tuple(e["id"] for e in events))
-        self.ledger.metric("extract", (time.perf_counter() - started) * 1000, path=usage.model, agent=s["agent"],
-                           tokens_in=sum(estimate_tokens(e["content"]) for e in events),
-                           llm_tokens=usage.tokens_in + usage.tokens_out,
+        self.ledger.metric("extract", (time.perf_counter() - started) * 1000, path=usage.model if usage else "gated",
+                           agent=s["agent"], tokens_in=sum(estimate_tokens(e["content"]) for e in events),
+                           llm_tokens=usage.tokens_in + usage.tokens_out if usage else 0,
                            meta={"accepted": len(accepted), "rejected": len(rejected)})  # fmt: skip
         self._guard(s["agent"])
         self._maybe_size_trigger(agent["user_id"])
         return {"stored": sum(r["outcome"] == "created" for r in results), "rejected": len(rejected),
-                "model": usage.model, "results": results}  # fmt: skip
+                "model": usage.model if usage else None, "results": results}  # fmt: skip
 
     def session_end(self, agent: str, session_id: str, background: bool = False) -> dict:
         s = self._session(session_id)
@@ -324,8 +385,10 @@ class MemoryService:
 
     def remember(self, agent: str, text: str, *, type: str | None = None, subject: str = "", predicate: str = "",
                  value: str = "", source: str = "agent", pool: str | None = None, sensitivity: str = "internal",
-                 pinned: bool = False, session_id: str | None = None, long_term: bool = False) -> dict:  # fmt: skip
+                 pinned: bool = False, session_id: str | None = None, long_term: bool = False, wait: bool = True) -> dict:  # fmt: skip
         """Explicit write into short-term memory (or a subagent's scratch pool).
+
+        With `wait=False`, text that needs structuring is logged now and written by the background worker.
 
         Without a subject/predicate key, the extract model structures the text first. `pool` names the
         long-term pool the memory will be filed into; `long_term=True` files it there immediately.
@@ -352,18 +415,42 @@ class MemoryService:
         ev = self.ledger.add_event(pool_id=p["id"], agent=agent, role="user" if source_type == "user" else "assistant",
                                    source_type=source_type, content=text, session_id=session_id)  # fmt: skip
         self.db.execute("UPDATE events SET extracted = 1 WHERE id = ?", (ev["id"],))
+
+        def write() -> dict:
+            return self._remember_write(a, ev, text, p=p, target=target, scratch=scratch, type=type, subject=subject,
+                                        predicate=predicate, value=value, source_type=source_type, flags_extra=flags_extra,
+                                        sensitivity=sensitivity, pinned=pinned, session_id=session_id, long_term=long_term,
+                                        started=started)  # fmt: skip
+
+        if not wait and not (subject and predicate):
+            # Structuring free text takes a model call; the agent shouldn't wait for it.
+            self.worker.submit(self._quietly, write)
+            return {"queued": True, "event_id": ev["id"]}
+        return write()
+
+    def _quietly(self, fn) -> None:
+        try:
+            fn()
+        except Exception:  # a failed background write must not kill the worker; the event stays in the transcript
+            log.exception("background write failed")
+
+    def _remember_write(self, a: dict, ev: dict, text: str, *, p: dict, target: str | None, scratch: bool, type: str | None,
+                        subject: str, predicate: str, value: str, source_type: str, flags_extra: list[str],
+                        sensitivity: str, pinned: bool, session_id: str | None, long_term: bool, started: float) -> dict:  # fmt: skip
+        agent = a["name"]
         claims: list[ClaimIn] = []
         llm_tokens = 0
         if not (subject and predicate):
             try:
-                accepted, _rej, usage = extract_claims(self.llm, [ev])
-                llm_tokens = usage.tokens_in + usage.tokens_out
+                # The agent asked for this to be kept, so no salience gate; chunking still applies.
+                accepted, _rej, usage = extract_claims(self.llm, [ev], gate=False)
+                llm_tokens = usage.tokens_in + usage.tokens_out if usage else 0
                 claims = [_claim_in(c) for c, _ in accepted]
             except LLMUnavailable:
                 pass
         if not claims:
             claims = [ClaimIn(type=type or "fact", text=text, subject=subject, predicate=predicate, value=value or text,
-                              quote=text, sensitivity=sensitivity)]  # fmt: skip
+                              quote=text, sensitivity=at_least(sensitivity, detect_sensitivity(text)))]  # fmt: skip
         results = []
         for c in claims:
             if type:
@@ -1061,6 +1148,43 @@ class MemoryService:
             "SELECT op, created_at, latency_ms, tokens_out FROM metrics ORDER BY id DESC LIMIT 200"
         )
         return out
+
+    def dashboard_sessions(self, agent: str) -> dict:
+        return dash_mod.sessions(self, agent)
+
+    def dashboard_memories(self, agent: str, kind: str, ident: str) -> dict:
+        try:
+            return dash_mod.memories(self, agent, kind, ident)
+        except LookupError as e:
+            raise NotFound(str(e)) from e
+
+    def dashboard_timeline(self, agent: str, kind: str, ident: str) -> dict:
+        try:
+            return dash_mod.timeline(self, agent, kind, ident)
+        except LookupError as e:
+            raise NotFound(str(e)) from e
+
+    def dashboard_tokens(self, bucket: str = "hour") -> dict:
+        return dash_mod.tokens(self, bucket)
+
+    def dashboard_forgetting(self, agent: str) -> dict:
+        return dash_mod.forgetting(self, agent)
+
+    def _raw_guard(self, agent: str) -> None:
+        # The raw view bypasses pool ACLs and clearance, so only the human's UI identity may use it.
+        if agent != "ui":
+            raise AccessDenied("the raw database view is only available to the UI")
+
+    def raw_catalog(self, agent: str) -> dict:
+        self._raw_guard(agent)
+        return raw_mod.catalog(self)
+
+    def raw_rows(self, agent: str, table: str, **kw) -> dict:
+        self._raw_guard(agent)
+        try:
+            return raw_mod.rows(self, table, **kw)
+        except LookupError as e:
+            raise NotFound(str(e)) from e
 
     def audit_log(self, limit: int = 200) -> list[dict]:
         return self.db.all("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))

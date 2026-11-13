@@ -1,6 +1,6 @@
 """Background maintenance inside the daemon: the STM sweeper and nightly consolidation.
 
-One thread wakes every minute. Work is handed to the service's single worker so it
+One thread wakes every few seconds for idle extraction and once a minute for maintenance. Work is handed to the service's single worker so it
 never runs concurrently with session extraction.
 """
 
@@ -21,9 +21,11 @@ log = logging.getLogger("rufur.scheduler")
 
 
 class Scheduler:
-    def __init__(self, svc: "MemoryService", tick_s: float = 60.0):
+    def __init__(self, svc: "MemoryService", tick_s: float = 15.0, maintenance_s: float = 60.0):
         self.svc = svc
-        self.tick_s = tick_s
+        self.tick_s = tick_s  # idle-session extraction runs every tick
+        self.maintenance_s = maintenance_s  # sweep and nightly checks; they must not re-queue a job still pending
+        self._last_maintenance = 0.0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="rufur-scheduler", daemon=True)
 
@@ -63,7 +65,13 @@ class Scheduler:
 
     def _loop(self) -> None:
         while not self._stop.wait(self.tick_s):
-            self.tick()
+            try:
+                self.svc.extract_idle_sessions()
+                if now() - self._last_maintenance >= self.maintenance_s:
+                    self._last_maintenance = now()
+                    self.tick()
+            except Exception:  # keep the scheduler thread alive; the next tick retries
+                log.exception("scheduler tick failed")
 
     def tick(self) -> None:
         c = self.svc.cfg

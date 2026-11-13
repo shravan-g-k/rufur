@@ -104,7 +104,9 @@ class Ledger:
                 (row["text"], row["subject"], row["predicate"], row["value"], row["id"]),
             )
             self.add_lineage("fts", str(cur.lastrowid), row["id"])
-            self.op("create", row["id"], row["author_agent"], {"type": row["type"], "pool": row["pool_id"]})
+            # Session and tier let the dashboard replay a session's history after its memories are deleted.
+            self.op("create", row["id"], row["author_agent"], {"type": row["type"], "pool": row["pool_id"],
+                                                               "session": row["session_id"], "tier": row["tier"]})  # fmt: skip
         self.bus.publish("memory.created", id=row["id"], status=row["status"], pool_id=row["pool_id"], type=row["type"])
         return row
 

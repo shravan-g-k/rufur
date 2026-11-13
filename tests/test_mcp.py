@@ -45,7 +45,7 @@ def test_tools_listed(service):
 
 def test_mcp_and_rest_parity(service, client):
     server = build_mcp(LocalBackend(service), default_agent="ui")
-    wrote = call(server, "remember", {"text": "I prefer helix for editing", "source": "user"})
+    wrote = call(server, "remember", {"text": "I prefer helix for editing", "source": "user", "wait": True})
     mid = wrote["results"][0]["memory"]["id"]
 
     via_mcp = call(server, "recall", {"query": "which editor does the user prefer"})

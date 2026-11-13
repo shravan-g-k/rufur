@@ -13,36 +13,14 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     }
     throw new Error(`${r.status}: ${detail}`);
   }
+  // A daemon older than this UI answers unknown API paths with the app's index.html.
+  if (!r.headers.get("content-type")?.includes("application/json")) {
+    throw new Error(`${path} isn't available on this daemon. It is probably older than the UI: restart it with \`rufur stop && rufur start\`.`);
+  }
   return r.json();
 }
 
 export type Status = "active" | "superseded" | "disputed" | "quarantined" | "archived" | "rejected";
-
-export interface GraphNode {
-  id: string;
-  kind: "memory" | "subject" | "entity";
-  label: string;
-  type?: string;
-  status?: Status;
-  trust?: string;
-  importance?: number;
-  pool?: string;
-  created_at?: number;
-  valid_to?: number | null;
-  author_agent?: string;
-  sensitivity?: string;
-  tier?: "stm" | "ltm";
-  store?: string;
-  x?: number;
-  y?: number;
-}
-
-export interface GraphLink {
-  source: string | GraphNode;
-  target: string | GraphNode;
-  kind: "supersedes" | "about" | "relation" | "co_source";
-  label?: string;
-}
 
 export interface Memory {
   id: string;
@@ -78,27 +56,6 @@ export interface Memory {
   lineage: { child_kind: string; child_id: string }[];
   related: { id: string; text: string; status: Status; trust: string; source_type: string }[];
   edges: { src: string; relation: string; dst: string }[];
-}
-
-export interface RecallItem {
-  id: string;
-  text: string;
-  type: string;
-  trust: string;
-  source_type: string;
-  disputed: boolean;
-  relevance: number;
-  score: number;
-  sources: string[];
-}
-
-export interface RecallResult {
-  abstained: boolean;
-  missing: string | null;
-  items: RecallItem[];
-  context: string;
-  tokens: number;
-  latency_ms: number;
 }
 
 export interface ForgetResult {
@@ -149,12 +106,191 @@ export interface Pool {
   acl: { read: string[]; write: string[] };
 }
 
+export type Scope = "session" | "scratch" | "unsessioned";
+
+export interface PoolSummary {
+  id: string;
+  purpose: string | null;
+  owner_agent: string;
+  session_id: string | null;
+  created_at: number;
+  expires_at: number | null;
+  closed_at: number | null;
+  status: "open" | "closed" | "expired";
+  seeded_stm: number;
+  seeded_ltm: number;
+  own: number;
+  own_written: number;
+  merged: number | null;
+  discarded: number | null;
+  close_reason: string | null;
+}
+
+export interface SessionSummary {
+  id: string;
+  agent: string;
+  started_at: number;
+  ended_at: number | null;
+  task_id: string | null;
+  events: number;
+  redacted_events: number;
+  event_tokens: number;
+  stm: Partial<Record<Status, number>>;
+  ltm: Partial<Record<Status, number>>;
+  forgotten: number;
+  pools: PoolSummary[];
+}
+
+export interface Ttl {
+  base_h: number;
+  extend_h: number;
+  max_h: number;
+  grace_h: number;
+  scratch_min: number;
+}
+
+type TierCounts = { stm: Partial<Record<Status, number>>; ltm: Partial<Record<Status, number>> };
+
+export interface Sessions {
+  sessions: SessionSummary[];
+  unattached_pools: PoolSummary[];
+  totals: {
+    memories: TierCounts;
+    unsessioned: TierCounts;
+    scratch: TierCounts;
+    pools: Record<string, { open: number; closed: number }>;
+  };
+  ttl: Ttl;
+  now: number;
+}
+
+export interface PoolMemory {
+  id: string;
+  text: string;
+  type: string;
+  tier: "stm" | "ltm";
+  status: Status;
+  store: string;
+  trust: string;
+  created_at: number;
+  expires_at: number | null;
+  access_count: number;
+  last_accessed: number | null;
+  author_agent: string;
+  origin: "session" | "seeded" | "own";
+}
+
+export interface TimelineEvent {
+  t: number;
+  kind: string;
+  agent: string | null;
+  memory_id?: string;
+  text?: string | null;
+  detail: Record<string, any>;
+}
+
+export interface EvolutionPoint {
+  t: number;
+  stm: number;
+  ltm: number;
+  superseded: number;
+  forgotten: number;
+  expired: number;
+}
+
+export interface Tokens {
+  bucket: "hour" | "day";
+  series: { t: number; recall: number; remember: number; extract: number; forget: number; llm: number; served: number }[];
+  cumulative: { t: number; full_history: number; rufur: number }[];
+  by_agent: { agent: string; calls: number; tokens_in: number; tokens_out: number; llm_tokens: number }[];
+  totals: { tokens_in: number; tokens_out: number; llm_tokens: number };
+}
+
+export interface Probe {
+  store: string;
+  kind: string;
+  informative: boolean;
+  before_hits: number | null;
+  after_hits: number;
+}
+
+export interface Receipt {
+  receipt_id: string;
+  agent: string;
+  issued_at: number;
+  memory_ids: string[];
+  target_hashes: string[];
+  counts: Record<string, number>;
+  probes: Probe[];
+  completeness: number | null;
+  erasure: string;
+  prev_hash: string;
+  hash: string;
+  sig: string;
+}
+
+export interface Forgetting {
+  receipts: Receipt[];
+  chain: { receipts: number; valid: boolean; problems: { receipt: string; problem: string }[]; resurfaced_memories: string[] };
+  redacted_events: { id: string; session_id: string | null; agent: string; role: string; content: string; created_at: number }[];
+  placeholder: string;
+  counts: Partial<Record<"archived" | "forgotten" | "purged", number>>;
+  tombstones: number;
+}
+
+export interface RawColumn {
+  name: string;
+  type: string;
+  notnull: boolean;
+  default: string | null;
+  pk: number;
+}
+
+export interface RawTable {
+  name: string;
+  type: "table" | "view" | "virtual";
+  sql: string | null;
+  rows: number | null;
+  error: string | null;
+  group: "relational" | "fts" | "vector" | "graph" | "system";
+  shadow_of: string | null;
+  columns: RawColumn[];
+  has_rowid: boolean;
+  indexes: { name: string; sql: string | null }[];
+  foreign_keys: { table: string; from: string; to: string }[];
+}
+
+export interface RawLink {
+  from_table: string;
+  from_column: string;
+  to_table: string;
+  to_column: string;
+  when: { column: string; equals: string } | null;
+}
+
+export interface RawCatalog {
+  database: { path: string; bytes: number; wal_bytes: number | null; sqlite: string; sqlite_vec: string; embed_dim: number };
+  tables: RawTable[];
+  links: RawLink[];
+  files_dir: string;
+  files: { path: string; bytes: number; modified: number }[];
+}
+
+export type RawBlob = { $blob: string; bytes: number; truncated: boolean };
+export type RawValue = string | number | null | RawBlob;
+
+export interface RawRows {
+  table: string;
+  columns: string[];
+  rows: RawValue[][];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export const api = {
-  graph: (pool?: string) => req<{ nodes: GraphNode[]; links: GraphLink[] }>("GET", `/v1/graph${pool ? `?pool=${encodeURIComponent(pool)}` : ""}`),
   memory: (id: string) => req<Memory>("GET", `/v1/memories/${id}`),
   memories: (q = "") => req<Memory[]>("GET", `/v1/memories${q}`),
-  recall: (query: string, pool?: string) => req<RecallResult>("POST", "/v1/recall", { query, pool: pool || null, token_budget: 800 }),
-  remember: (text: string, pool?: string) => req<unknown>("POST", "/v1/memories", { text, source: "user", pool: pool || null }),
   confirm: (id: string, action: "confirm" | "reject") => req<unknown>("POST", `/v1/memories/${id}/confirm`, { action }),
   forget: (id: string) => req<ForgetResult>("POST", "/v1/forget", { memory_id: id }),
   quarantine: () => req<(Memory & { sources: { quote: string }[] })[]>("GET", "/v1/quarantine"),
@@ -168,6 +304,21 @@ export const api = {
   stmStats: () => req<any>("GET", "/v1/stm/stats"),
   scratchPools: () => req<any[]>("GET", "/v1/scratch-pools"),
   decisions: () => req<Decision[]>("GET", "/v1/decisions"),
+  sessions: () => req<Sessions>("GET", "/v1/dashboard/sessions"),
+  poolMemories: (kind: Scope, id: string) => req<{ items: PoolMemory[]; now: number }>("GET", `/v1/dashboard/${kind}/${id}/memories`),
+  timeline: (kind: Scope, id: string) => req<{ events: TimelineEvent[]; series: EvolutionPoint[] }>("GET", `/v1/dashboard/${kind}/${id}/timeline`),
+  tokens: (bucket: "hour" | "day") => req<Tokens>("GET", `/v1/dashboard/tokens?bucket=${bucket}`),
+  forgetting: () => req<Forgetting>("GET", "/v1/dashboard/forgetting"),
+  verifyForgetting: () => req<Forgetting["chain"]>("POST", "/v1/forget/verify"),
+  rawCatalog: () => req<RawCatalog>("GET", "/v1/raw/catalog"),
+  rawRows: (table: string, q: { limit: number; offset: number; column?: string; value?: string; desc?: boolean }) => {
+    const p = new URLSearchParams({ limit: String(q.limit), offset: String(q.offset), desc: String(!!q.desc) });
+    if (q.column !== undefined && q.value !== undefined) {
+      p.set("column", q.column);
+      p.set("value", q.value);
+    }
+    return req<RawRows>("GET", `/v1/raw/tables/${encodeURIComponent(table)}?${p}`);
+  },
   decide: (id: string, winner: string | null, action: "keep" | "neither" = "keep") =>
     req<unknown>("POST", `/v1/decisions/${id}`, { action, winner, decided_by: "user" }),
 };
@@ -189,6 +340,16 @@ export const STORE_LABEL: Record<string, string> = {
   journal: "the daily journal",
   discard: "nowhere (short-term only)",
 };
+
+export function hours(h: number): string {
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`;
+  if (h < 48) return `${Math.round(h)} h`;
+  return `${Math.round(h / 24)} days`;
+}
+
+export function clock(ts: number): string {
+  return new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
 export function since(ts: number): string {
   const s = Date.now() / 1000 - ts;

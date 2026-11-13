@@ -1,45 +1,94 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, GraphLink, GraphNode, Pool, RecallResult } from "./api";
-import BrainGraph from "./BrainGraph";
-import Inspector from "./Inspector";
-import { Metrics, Review, Tasks, Timeline } from "./Views";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BrainIcon, CoinsIcon, DatabaseIcon, InboxIcon, LayoutDashboardIcon, MoonIcon, ShieldCheckIcon, SunIcon, TriangleAlertIcon, WorkflowIcon, LayersIcon, type LucideIcon } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { MemorySheet } from "@/components/memory-sheet";
+import { AgentsPage } from "@/pages/agents";
+import { ForgettingPage } from "@/pages/forgetting";
+import { OverviewPage } from "@/pages/overview";
+import { ReviewPage } from "@/pages/review";
+import { Selection, SessionsPage } from "@/pages/sessions";
+import { RawPage } from "@/pages/raw";
+import { TokensPage } from "@/pages/tokens";
+import { api, Sessions } from "@/api";
 
-type View = "brain" | "timeline" | "review" | "tasks" | "metrics";
+type Page = "overview" | "sessions" | "tokens" | "forgetting" | "review" | "agents" | "raw";
 
-const VIEWS: { id: View; label: string }[] = [
-  { id: "brain", label: "Brain" },
-  { id: "timeline", label: "Timeline" },
-  { id: "review", label: "Review" },
-  { id: "tasks", label: "Agents" },
-  { id: "metrics", label: "Usage" },
+const PAGES: { id: Page; label: string; icon: LucideIcon; description: string }[] = [
+  { id: "overview", label: "Overview", icon: LayoutDashboardIcon, description: "Memory across all sessions at a glance." },
+  { id: "sessions", label: "Sessions & pools", icon: LayersIcon, description: "Each session, its subagent pools, and their short- and long-term memory." },
+  { id: "tokens", label: "Tokens", icon: CoinsIcon, description: "What memory costs and saves, over time." },
+  { id: "forgetting", label: "Forgetting", icon: ShieldCheckIcon, description: "What was deleted, and the proof that it’s gone." },
+  { id: "review", label: "Review", icon: InboxIcon, description: "Held memories and conflicts waiting on a decision." },
+  { id: "agents", label: "Handovers", icon: WorkflowIcon, description: "Tasks agents passed to each other." },
+  { id: "raw", label: "Raw data", icon: DatabaseIcon, description: "Every table, vector and graph row exactly as stored, read-only." },
 ];
 
+function useTheme() {
+  const [dark, setDark] = useState(() => {
+    try {
+      const saved = localStorage.getItem("rufur-theme");
+      if (saved) return saved === "dark";
+    } catch {
+      /* storage unavailable */
+    }
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    try {
+      localStorage.setItem("rufur-theme", dark ? "dark" : "light");
+    } catch {
+      /* storage unavailable */
+    }
+  }, [dark]);
+  return [dark, setDark] as const;
+}
+
 export default function App() {
-  const [view, setView] = useState<View>("brain");
-  const [pool, setPool] = useState<string>("");
-  const [pools, setPools] = useState<Pool[]>([]);
-  const [graph, setGraph] = useState<{ nodes: GraphNode[]; links: GraphLink[] }>({ nodes: [], links: [] });
-  const [selected, setSelected] = useState<string | null>(null);
+  const [page, setPage] = useState<Page>("overview");
+  const [sessions, setSessions] = useState<Sessions | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pool, setPool] = useState<Selection>(null);
+  const [memory, setMemory] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [live, setLive] = useState(false);
   const [reviewCount, setReviewCount] = useState(0);
-
-  const [mode, setMode] = useState<"ask" | "remember">("ask");
-  const [query, setQuery] = useState("");
-  const [asking, setAsking] = useState(false);
-  const [answer, setAnswer] = useState<RecallResult | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [replay, setReplay] = useState<number | null>(null);
+  const [dark, setDark] = useTheme();
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
 
   useEffect(() => {
-    api.graph(pool || undefined).then(setGraph);
-    api.pools().then(setPools);
-    Promise.all([api.quarantine(), api.decisions()]).then(([q, d]) => setReviewCount(q.length + d.length));
-  }, [version, pool]);
+    api.sessions().then(
+      (s) => {
+        setSessions(s);
+        setLoadError(null);
+      },
+      (e) => setLoadError(e.message),
+    );
+    Promise.all([api.quarantine(), api.decisions()]).then(([q, d]) => setReviewCount(q.length + d.length), () => setReviewCount(0));
+  }, [version]);
 
-  // Live updates: any write, forget or handover anywhere refreshes the views.
+  // Live updates: any write, forget, pool change or handover anywhere refreshes the views.
   const timer = useRef<number>();
   useEffect(() => {
     const es = new EventSource("/v1/stream");
@@ -54,171 +103,118 @@ export default function App() {
     return () => es.close();
   }, [refresh]);
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q) return;
-    setAsking(true);
-    setNotice(null);
-    try {
-      if (mode === "ask") {
-        setAnswer(await api.recall(q, pool || undefined));
-        setView("brain");
-      } else {
-        await api.remember(q, pool || undefined);
-        setNotice("Saved. It appears in the brain once it’s been checked against what’s already there.");
-        setQuery("");
-        refresh();
-      }
-    } catch (err: any) {
-      setNotice(err.message);
-    } finally {
-      setAsking(false);
-    }
-  }
-
-  const highlight = useMemo(() => new Set(answer?.items.map((i) => i.id) ?? []), [answer]);
-  const memNodes = graph.nodes.filter((n) => n.kind === "memory");
-  const times = memNodes.map((n) => n.created_at ?? 0).sort((a, b) => a - b);
-  const counts = memNodes.reduce<Record<string, number>>((acc, n) => ({ ...acc, [n.status!]: (acc[n.status!] ?? 0) + 1 }), {});
+  const current = PAGES.find((p) => p.id === page)!;
+  const openSession = (id: string) => {
+    setPool({ kind: "session", id });
+    setPage("sessions");
+  };
 
   return (
-    <div className="app">
-      <header className="top">
-        <div className="brand">
-          <span className="mark" aria-hidden />
-          <span>RUFUR</span>
-          <span className={`live ${live ? "on" : ""}`} title={live ? "Receiving live updates" : "Not connected to the daemon"}>
-            {live ? "live" : "offline"}
-          </span>
-        </div>
-        <form className="ask" onSubmit={submit}>
-          <div className="mode" role="radiogroup" aria-label="What to do">
-            <button type="button" role="radio" aria-checked={mode === "ask"} className={mode === "ask" ? "on" : ""} onClick={() => setMode("ask")}>
-              Ask
-            </button>
-            <button type="button" role="radio" aria-checked={mode === "remember"} className={mode === "remember" ? "on" : ""} onClick={() => setMode("remember")}>
-              Remember
-            </button>
-          </div>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={mode === "ask" ? "Ask what your agents would recall, e.g. where does the user live?" : "Tell the brain something to remember"}
-            aria-label={mode === "ask" ? "Question" : "Memory to save"}
-          />
-          <button className="primary" disabled={asking || !query.trim()}>
-            {asking ? "…" : mode === "ask" ? "Ask" : "Save"}
-          </button>
-        </form>
-        <label className="pool">
-          <span>Pool</span>
-          <select value={pool} onChange={(e) => setPool(e.target.value)}>
-            <option value="">All pools</option>
-            {pools.map((p) => (
-              <option key={p.id} value={p.name}>
-                {p.name} ({p.memories})
-              </option>
-            ))}
-          </select>
-        </label>
-      </header>
+    <TooltipProvider>
+      <SidebarProvider>
+        <Sidebar collapsible="icon">
+          <SidebarHeader>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton size="lg" onClick={() => setPage("overview")}>
+                  <div className="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
+                    <BrainIcon className="size-4" />
+                  </div>
+                  <div className="grid flex-1 text-left leading-tight">
+                    <span className="truncate font-semibold">RUFUR</span>
+                    <span className="text-muted-foreground truncate text-xs">Memory dashboard</span>
+                  </div>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <NavItems
+                    page={page}
+                    onNavigate={setPage}
+                    badges={{ review: reviewCount || undefined, sessions: sessions?.sessions.length }}
+                  />
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+          <SidebarFooter>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip={dark ? "Light theme" : "Dark theme"} onClick={() => setDark(!dark)}>
+                  {dark ? <SunIcon /> : <MoonIcon />}
+                  <span>{dark ? "Light theme" : "Dark theme"}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarFooter>
+        </Sidebar>
 
-      <nav className="views" aria-label="Views">
-        {VIEWS.map((v) => (
-          <button key={v.id} className={view === v.id ? "on" : ""} aria-current={view === v.id ? "page" : undefined} onClick={() => setView(v.id)}>
-            {v.label}
-            {v.id === "review" && reviewCount > 0 && <span className="badge">{reviewCount}</span>}
-          </button>
-        ))}
-      </nav>
-
-      <main className={`main ${selected ? "with-drawer" : ""}`}>
-        {view === "brain" && (
-          <div className="brain">
-            {memNodes.length === 0 ? (
-              <div className="blank">
-                <p>The brain is empty.</p>
-                <p className="muted">Connect Claude Code or another agent over MCP, or switch the box above to Remember and add something.</p>
-              </div>
-            ) : (
-              <BrainGraph nodes={graph.nodes} links={graph.links} highlight={highlight} selected={selected} onSelect={setSelected} upTo={replay} />
-            )}
-
-            <div className="legend" aria-label="Legend">
-              <span><i className="dot active" />long-term {memNodes.filter((n) => n.status === "active" && n.tier !== "stm").length}</span>
-              <span><i className="dot stm" />short-term {memNodes.filter((n) => n.status === "active" && n.tier === "stm").length}</span>
-              <span><i className="dot disputed" />disputed {counts.disputed ?? 0}</span>
-              <span><i className="dot quarantined" />held for review {counts.quarantined ?? 0}</span>
-              <span><i className="dot superseded" />replaced {counts.superseded ?? 0}</span>
+        <SidebarInset>
+          <header className="bg-background/95 sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b px-4 backdrop-blur">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <h1 className="truncate text-sm font-semibold">{current.label}</h1>
+              <p className="text-muted-foreground hidden truncate text-xs sm:block">{current.description}</p>
             </div>
+            <Badge variant={live ? "secondary" : "outline"} title={live ? "Receiving live updates" : "Not connected to the daemon"}>
+              <span aria-hidden className={live ? "bg-chart-3 size-1.5 rounded-full" : "bg-muted-foreground size-1.5 rounded-full"} />
+              {live ? "Live" : "Offline"}
+            </Badge>
+            <Button variant="ghost" size="sm" onClick={refresh}>
+              Refresh
+            </Button>
+          </header>
 
-            {times.length > 1 && (
-              <label className="replay">
-                <span>{replay === null ? "Showing everything" : `As of ${new Date(replay * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}</span>
-                <input
-                  type="range"
-                  min={times[0]}
-                  max={times[times.length - 1]}
-                  step={(times[times.length - 1] - times[0]) / 200 || 1}
-                  value={replay ?? times[times.length - 1]}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setReplay(v >= times[times.length - 1] ? null : v);
-                  }}
-                  aria-label="Replay how the brain grew"
-                />
-              </label>
+          <main className="flex flex-1 flex-col gap-4 p-4 md:p-6">
+            {loadError && (
+              <Alert variant="destructive">
+                <TriangleAlertIcon />
+                <AlertTitle>Couldn’t load the dashboard</AlertTitle>
+                <AlertDescription>{loadError}</AlertDescription>
+              </Alert>
             )}
+            {page === "overview" && <OverviewPage data={sessions} version={version} onChanged={refresh} onSelectMemory={setMemory} onOpenSession={openSession} />}
+            {page === "sessions" && <SessionsPage data={sessions} selection={pool} onSelectPool={setPool} onSelectMemory={setMemory} version={version} />}
+            {page === "tokens" && <TokensPage version={version} />}
+            {page === "forgetting" && <ForgettingPage version={version} />}
+            {page === "review" && <ReviewPage version={version} onChanged={refresh} onSelectMemory={setMemory} />}
+            {page === "agents" && <AgentsPage version={version} onSelectMemory={setMemory} />}
+            {page === "raw" && <RawPage />}
+          </main>
+        </SidebarInset>
 
-            {answer && (
-              <section className="answer" aria-live="polite">
-                <header>
-                  <h2>
-                    {answer.abstained
-                      ? "Nothing stored answers this"
-                      : `${answer.items.length} ${answer.items.length === 1 ? "memory" : "memories"} would be sent`}
-                  </h2>
-                  <button className="close" onClick={() => setAnswer(null)} aria-label="Close answer">
-                    ×
-                  </button>
-                </header>
-                {answer.abstained ? (
-                  <p className="muted">Agents get an honest “I don’t know” instead of a guess.</p>
-                ) : (
-                  <ol>
-                    {answer.items.map((it) => (
-                      <li key={it.id}>
-                        <button className="link mem-line" onClick={() => setSelected(it.id)}>
-                          {it.text}
-                        </button>
-                        <span className="muted small">
-                          {it.trust.replace("_", " ")} trust, match {Math.round(it.relevance * 100)}%{it.disputed && <span className="chip s-disputed">disputed</span>}
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-                <p className="muted small">
-                  {answer.tokens} tokens, {Math.round(answer.latency_ms)} ms
-                </p>
-              </section>
-            )}
-          </div>
-        )}
-        {view === "timeline" && <Timeline onSelect={setSelected} version={version} />}
-        {view === "review" && <Review onSelect={setSelected} version={version} onChanged={refresh} />}
-        {view === "tasks" && <Tasks onSelect={setSelected} version={version} />}
-        {view === "metrics" && <Metrics version={version} onChanged={refresh} />}
+        <MemorySheet id={memory} ttl={sessions?.ttl ?? null} onClose={() => setMemory(null)} onChanged={refresh} onSelect={setMemory} />
+      </SidebarProvider>
+    </TooltipProvider>
+  );
+}
 
-        {selected && <Inspector id={selected} onClose={() => setSelected(null)} onChanged={refresh} onSelect={setSelected} />}
-      </main>
-
-      {notice && (
-        <div className="toast" role="status" onClick={() => setNotice(null)}>
-          {notice}
-        </div>
-      )}
-    </div>
+function NavItems({ page, onNavigate, badges }: { page: Page; onNavigate: (p: Page) => void; badges: Partial<Record<Page, number>> }) {
+  // On phones the sidebar is a sheet over the page, so close it once a page is picked.
+  const { isMobile, setOpenMobile } = useSidebar();
+  return (
+    <>
+      {PAGES.map((p) => (
+        <SidebarMenuItem key={p.id}>
+          <SidebarMenuButton
+            isActive={page === p.id}
+            tooltip={p.label}
+            onClick={() => {
+              onNavigate(p.id);
+              if (isMobile) setOpenMobile(false);
+            }}
+          >
+            <p.icon />
+            <span>{p.label}</span>
+          </SidebarMenuButton>
+          {badges[p.id] !== undefined && <SidebarMenuBadge>{badges[p.id]}</SidebarMenuBadge>}
+        </SidebarMenuItem>
+      ))}
+    </>
   );
 }

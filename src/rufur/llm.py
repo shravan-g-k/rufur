@@ -43,10 +43,14 @@ class LLM:
         # stopped Ollama doesn't add a timeout to every call.
         self._down_until: dict[str, float] = {}
 
-    def complete(self, role: str, system: str, user: str, schema: type[T]) -> tuple[T, LLMResult]:
+    def complete(self, role: str, system: str, user: str, schema: type[T], *, accept: Callable[[T], bool] | None = None,
+                 num_predict: int = 2048) -> tuple[T, LLMResult]:  # fmt: skip
+        """`accept` rejects an answer that parses but is unusable; the next model in the chain gets a go.
+        If no model passes it, the first parsed answer is returned and the caller deals with the bad parts."""
         if self.cfg.offline:
             raise LLMUnavailable("offline mode")
         errors: list[str] = []
+        fallback: tuple[T, LLMResult] | None = None
         for hop in self.cfg.roles.get(role, []):
             hop_key = f"{hop.provider}:{hop.base_url or self.cfg.ollama_url}"
             if self._down_until.get(hop_key, 0) > time.time():
@@ -55,8 +59,13 @@ class LLM:
                 continue
             for _attempt in range(2):
                 try:
-                    result = self._call(hop, system, user, schema)
-                    return schema.model_validate(result.data), result
+                    result = self._call(hop, system, user, schema, num_predict)
+                    parsed = schema.model_validate(result.data)
+                    if accept is None or accept(parsed):
+                        return parsed, result
+                    fallback = fallback or (parsed, result)
+                    errors.append(f"{hop.model}: answer rejected")
+                    break
                 except (ValidationError, json.JSONDecodeError) as e:
                     errors.append(f"{hop.model}: invalid output ({e.__class__.__name__})")
                 except httpx.ConnectError as e:
@@ -66,9 +75,11 @@ class LLM:
                 except (httpx.HTTPError, KeyError) as e:
                     errors.append(f"{hop.model}: {e}")
                     break
+        if fallback:
+            return fallback
         raise LLMUnavailable("; ".join(errors) or f"no usable provider for role {role!r}")
 
-    def _call(self, hop: ProviderRef, system: str, user: str, schema: type[BaseModel]) -> LLMResult:
+    def _call(self, hop: ProviderRef, system: str, user: str, schema: type[BaseModel], num_predict: int = 2048) -> LLMResult:
         started = time.perf_counter()
         json_schema = schema.model_json_schema()
         if hop.provider == "ollama":
@@ -79,7 +90,8 @@ class LLM:
                 "stream": False,
                 # Thinking models (qwen3.5, gpt-oss) otherwise reason for minutes before emitting JSON.
                 "think": False,
-                "options": {"temperature": 0, "num_predict": 2048},
+                "keep_alive": "30m",  # a model reloaded between calls costs seconds
+                "options": {"temperature": 0, "num_predict": num_predict},
             }
             r = self.client.post(f"{(hop.base_url or self.cfg.ollama_url).rstrip('/')}/api/chat", json=body)
             r.raise_for_status()
@@ -96,6 +108,7 @@ class LLM:
                 ],
                 "response_format": {"type": "json_object"},
                 "temperature": 0,
+                "max_tokens": num_predict,
             }
             r = self.client.post(
                 f"{hop.base_url.rstrip('/')}/chat/completions", json=body, headers={"Authorization": f"Bearer {key}"}
@@ -123,7 +136,8 @@ class FakeLLM(LLM):
         self.cfg = cfg
         self.handler = handler
 
-    def complete(self, role: str, system: str, user: str, schema: type[T]) -> tuple[T, LLMResult]:
+    def complete(self, role: str, system: str, user: str, schema: type[T], *, accept: Callable[[T], bool] | None = None,
+                 num_predict: int = 2048) -> tuple[T, LLMResult]:  # fmt: skip
         data = self.handler(role, user)
         if data is None:
             raise LLMUnavailable("fake: no answer")

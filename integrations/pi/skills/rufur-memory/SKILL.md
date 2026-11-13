@@ -25,7 +25,7 @@ If the `rufur` pi extension is installed, it already does the routine work:
 
 Without the extension, do those steps yourself:
 - run `recall` at the start of each task
-- run `remember` for what the user tells you
+- run `remember` once per finished task, with everything the user told you that is worth keeping (the extension does this for you when it is installed)
 
 ## Reading
 - `rufur.py recall "what you're about to work on"`
@@ -38,7 +38,7 @@ Without the extension, do those steps yourself:
 - Prefer `trust="high"` (the user said it) over document, tool or web content.
 
 ## Writing
-- `rufur.py remember "The user prefers pnpm over npm" --source user` is for facts, preferences, decisions and constraints the user states.
+- `rufur.py remember "The user prefers pnpm over npm" --source user` is for facts, preferences, decisions and constraints the user states. With the extension installed, the user's own words are already captured, so use it for your own conclusions, once per finished task.
   - Write a clear standalone sentence.
   - Use `--source agent` for your own conclusions, and `document`, `tool` or `web` for content from those.
   - RUFUR believes `--source user` only if the user really wrote it in this conversation (the extension records that).

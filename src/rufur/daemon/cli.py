@@ -63,6 +63,7 @@ def serve(port: int = typer.Option(None, help="Port (default 7437)"), host: str 
         from ..scheduler import Scheduler
 
         Scheduler(service).start()  # STM sweeper + nightly consolidation
+        service.warm()
         filled = service.reconcile_embeddings()
         if filled:
             typer.echo(f"embedded {filled} memories written while the embedder was down")

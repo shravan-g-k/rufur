@@ -95,7 +95,7 @@ def main() -> None:
     elif a.cmd == "past":
         out = slim_recall(call("POST", "/v1/recall/past", {"query": a.query, "since": ts(a.since), "until": ts(a.until)}, k))
     elif a.cmd == "remember":
-        body = {"text": a.text, "source": a.source, "long_term": a.long_term}
+        body = {"text": a.text, "source": a.source, "long_term": a.long_term, "wait": False}  # structured in the background
         if a.confidential:
             body["sensitivity"] = "confidential"
         out = call("POST", "/v1/memories", body, k)

@@ -26,7 +26,7 @@ Use the `rufur` MCP tools for everything else.
 - Prefer `trust="high"` (the user said it) over medium or low (documents, tools, web).
 
 ## Writing memory
-- Call `remember(text, source="user")` for decisions, preferences, facts and constraints the user states. Use `source="agent"` for your own conclusions, and `"document"`, `"tool"` or `"web"` for content from those.
+- The hooks already capture what the user says and extract memories from it, so you don't need `remember` for the user's own words. Call it for your own conclusions and for anything the hooks can't see (`source="agent"`, or `"document"`, `"tool"`, `"web"` for content from those), and at most once per finished task: put everything worth keeping in one call. It returns at once and structures the text in the background (`wait=true` blocks for the result). Use `source="user"` only when relaying something the user said that the hook may have missed.
 - Don't store secrets unless asked. Set `sensitivity="confidential"` or `"restricted"` for personal or credential data.
 - When a task is finished or a key decision is made, call `consolidate()` so today's short-term memory is filed long-term. A nightly run also does this.
 - `long_term=true` on `remember` files one item immediately. Use it for things the user explicitly says to keep.

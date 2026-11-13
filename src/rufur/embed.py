@@ -70,7 +70,7 @@ class OllamaEmbedder:
         try:
             r = self.client.post(
                 f"{self.cfg.ollama_url}/api/embed",
-                json={"model": self.cfg.embed_model, "input": [prefix + t for t in texts]},
+                json={"model": self.cfg.embed_model, "input": [prefix + t for t in texts], "keep_alive": "30m"},
             )
             r.raise_for_status()
             return [_normalize(v) for v in r.json()["embeddings"]]
