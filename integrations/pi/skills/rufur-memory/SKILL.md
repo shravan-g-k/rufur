@@ -25,11 +25,23 @@ If the `rufur` pi extension is installed, it already does the routine work:
 
 Without the extension, do those steps yourself:
 - run `recall` at the start of each task
-- run `remember` once per finished task, with everything the user told you that is worth keeping (the extension does this for you when it is installed)
+- save every turn (see **Remember every turn** below)
 
 ## Save every prompt (required)
-With the `rufur` extension installed, every prompt is already recorded; you don't need to do anything. Without it, you are the only thing recording the conversation: on every turn, run `rufur.py remember "<the user's message, verbatim>" --source user` before you reply.
+With the `rufur` extension installed, every prompt is also recorded automatically. Either way, follow **Remember every turn** below.
 Do it for every message, even short or trivial-looking ones: RUFUR decides what is worth keeping, not you. Never skip it because you're busy or the turn is simple. If a call fails, retry once; if it still fails, carry on with the task and say so once at the end.
+
+## Remember every turn (required, no exceptions)
+At the end of **every** turn, every single message however short or long, save it before you finish. No turn ends without it.
+1. `rufur.py remember "<the user's message, word for word>" --source user`
+2. If you did, decided or concluded anything: `rufur.py remember "<a short paragraph: what you did, what was decided, and why>" --source agent`
+
+- Size doesn't matter: a one-word reply, a question, a long paste, code. Save it. Don't judge whether it's worth keeping; RUFUR filters, merges duplicates and lets unimportant things expire.
+- Very long content (over ~4,000 words): split it into several `remember` calls, in order. Never cut it short.
+- Personal details or credentials: add `--confidential`. Still save them.
+- The command returns at once (structuring happens in the background), so it never slows your reply.
+- Do it silently (see **Keep it seamless**). If it fails, retry once; if it still fails, finish and say once that this turn wasn't saved.
+- Do this even with the `rufur` extension installed; duplicates are merged automatically.
 
 ## Keep it seamless
 Memory is part of how you work, not a separate step the user watches.
@@ -48,7 +60,7 @@ Memory is part of how you work, not a separate step the user watches.
 - Prefer `trust="high"` (the user said it) over document, tool or web content.
 
 ## Writing
-- `rufur.py remember "The user prefers pnpm over npm" --source user` is for facts, preferences, decisions and constraints the user states. With the extension installed, the user's own words are already captured, so use it for your own conclusions, once per finished task.
+- `rufur.py remember "The user prefers pnpm over npm" --source user` is for facts, preferences, decisions and constraints the user states. Run it every turn, as described in **Remember every turn**.
   - Write a clear standalone sentence.
   - Use `--source agent` for your own conclusions, and `document`, `tool` or `web` for content from those.
   - RUFUR believes `--source user` only if the user really wrote it in this conversation (the extension records that).

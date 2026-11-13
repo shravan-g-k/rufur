@@ -87,11 +87,11 @@ def _last_assistant_text(transcript_path: str) -> str | None:
 
 
 SESSION_NOTE = (
-    "RUFUR memory is active (session {sid}). Everything the user says is captured and remembered automatically, and "
-    "relevant memories are added to your context, so you do not need to call remember for the user's own words. "
-    "Use the rufur MCP tools only to look further back (recall, recall_past) or to save a conclusion of yours, once, "
-    "when a task is finished. Before delegating to a subagent, call pool_spawn with session_id=\"{sid}\" and put the "
-    "returned memory address in its prompt."
+    "RUFUR memory is active (session {sid}). Relevant memories are added to your context automatically. "
+    "Required at the end of EVERY turn, whatever its size: call the rufur MCP tool remember with the user's message "
+    "word for word (source=\"user\"), and again with what you did or decided (source=\"agent\") if anything. Do it "
+    "silently; duplicates are merged. Use recall or recall_past to look further back. Before delegating to a subagent, "
+    "call pool_spawn with session_id=\"{sid}\" and put the returned memory address in its prompt."
 )
 
 

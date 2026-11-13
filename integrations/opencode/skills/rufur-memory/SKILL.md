@@ -17,9 +17,19 @@ The `rufur` opencode plugin already does the routine work:
 
 Use the `rufur` MCP tools for everything else.
 
-## Keep it seamless
-The plugin records every prompt for you, so never re-save the user's words.
+## Remember every turn (required, no exceptions)
+At the end of **every** turn, every single message however short or long, call the `rufur` MCP tool `remember` before you finish. No turn ends without it.
+1. `remember(text=<the user's message, word for word>, source="user")`
+2. If you did, decided or concluded anything: `remember(text=<a short paragraph: what you did, what was decided, and why>, source="agent")`
 
+- Size doesn't matter: a one-word reply, a question, a long paste, code. Save it. Don't judge whether it's worth keeping; RUFUR filters, merges duplicates and lets unimportant things expire.
+- Very long content (over ~4,000 words): split it into several `remember` calls, in order. Never cut it short.
+- Keys and passwords: add `sensitivity="restricted"`. Personal details: `sensitivity="confidential"`. Still save them.
+- The calls return at once (structuring happens in the background), so they never slow your reply.
+- Do it silently (see **Keep it seamless**). If a call fails, retry once; if it still fails, finish and say once that this turn wasn't saved.
+- Do this even though the plugin also records the conversation; duplicates are merged automatically.
+
+## Keep it seamless
 Memory is part of how you work, not a separate step the user watches.
 - Don't announce it. No "saved to RUFUR", "from memory", "according to RUFUR" or "let me check my memory" around tool calls; just use what you know and keep going.
 - Mention RUFUR only when it matters: the user asks what you remember or where something came from, you need them to settle a conflict, a stale or disputed memory changes your answer, or you're confirming a deletion.
@@ -34,7 +44,7 @@ Memory is part of how you work, not a separate step the user watches.
 - Prefer `trust="high"` (the user said it) over medium or low (documents, tools, web).
 
 ## Writing memory
-- Call `remember(text, source="user")` for decisions, preferences, facts and constraints the user states. Use `source="agent"` for your own conclusions, and `"document"`, `"tool"` or `"web"` for content from those.
+- Beyond the every-turn saves above, use `source="document"`, `"tool"` or `"web"` for content from those sources.
 - Don't store secrets unless asked. Set `sensitivity="confidential"` or `"restricted"` for personal or credential data.
 - When a task is finished or a key decision is made, call `consolidate()` so today's short-term memory is filed long-term. A nightly run also does this.
 - `long_term=true` on `remember` files one item immediately. Use it for things the user explicitly says to keep.
