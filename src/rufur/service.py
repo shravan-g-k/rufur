@@ -35,6 +35,7 @@ from .read import working_set as ws_mod
 from . import dashboard as dash_mod, pools as pools_mod, raw as raw_mod, stm as stm_mod
 from .write import consolidate as consolidate_mod
 from .write import resolve as resolve_mod
+from .write import review as review_mod
 from .textutil import estimate_tokens, new_id, now, quote_in, sha256
 from .write.chunk import at_least, detect_sensitivity, salient_chunks
 from .write.extract import extract_claims
@@ -517,12 +518,31 @@ class MemoryService:
     # ------------------------------------------------------------- conflicts
 
     def _settle(self, summary: dict) -> dict:
-        """Give the memory layer its own go at a new conflict; report what happened to the writer."""
+        """Give the memory layer its own go at a new conflict or held memory; report what happened to the writer."""
         if summary.get("conflict_id"):
             summary["conflict"] = resolve_mod.auto_resolve(self, summary["conflict_id"])
-            if summary["memory"]:
-                summary["memory"]["status"] = self.ledger.get_memory(summary["memory"]["id"])["status"]
+        elif summary.get("memory") and summary["memory"]["status"] == "quarantined":
+            summary["review"] = review_mod.review(self, summary["memory"]["id"])
+        if summary.get("memory"):
+            summary["memory"]["status"] = self.ledger.get_memory(summary["memory"]["id"])["status"]
         return summary
+
+    def auto_review(self, agent: str) -> dict:
+        """Let the memory layer take another pass at everything waiting on review: open conflicts it hasn't
+        already handed to the user, and held memories."""
+        a = self.agent(agent)
+        conflicts = []
+        for r in self.db.all("SELECT id FROM conflicts WHERE user_id = ? AND status = 'open' AND ask_user = 0",
+                             (a["user_id"],)):  # fmt: skip
+            try:
+                self._conflict_visible(agent, r["id"])
+            except NotFound:
+                continue
+            res = resolve_mod.auto_resolve(self, r["id"])
+            conflicts.append({"conflict_id": r["id"], "status": res["status"], "ask_user": res.get("ask_user", False)})
+        held = [review_mod.review(self, m["id"], force=True) for m in self.list_memories(agent, status="quarantined")]
+        self.ledger.audit(agent, "review.auto", None, {"conflicts": len(conflicts), "held": len(held)})
+        return {"conflicts": conflicts, "held": held}
 
     def _user_present(self, agent: str) -> bool:
         """True for the UI, or when the user wrote to *this* agent very recently (its captured prompts).

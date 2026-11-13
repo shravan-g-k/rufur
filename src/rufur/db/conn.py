@@ -38,6 +38,7 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("memories", "revalidate_at", "REAL"),
     ("memories", "corroboration", "INTEGER NOT NULL DEFAULT 1"),
     ("memories", "consolidation_run", "TEXT"),
+    ("conflicts", "ask_user", "INTEGER NOT NULL DEFAULT 0"),  # only the user can settle it; never defaulted
 ]
 
 POST_MIGRATION_INDEXES = (

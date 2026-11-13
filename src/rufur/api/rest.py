@@ -331,6 +331,10 @@ def create_app(service: MemoryService, *, mcp_app=None, mcp_session_manager=None
     def pending_decisions(a: str = A):
         return S.pending_decisions(a)
 
+    @app.post("/v1/review/auto")
+    def auto_review(a: str = A):
+        return S.auto_review(a)
+
     @app.post("/v1/decisions/{conflict_id}")
     def resolve_conflict(conflict_id: str, body: DecisionIn, a: str = A):
         return S.resolve_conflict(a, conflict_id, action=body.action, winner=body.winner, scopes=body.scopes,

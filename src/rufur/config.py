@@ -53,6 +53,11 @@ def default_roles() -> dict[str, list[ProviderRef]]:
             ("ollama", "gpt-oss:120b-cloud"),
             ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
+        "review": _chain(
+            ("ollama", "qwen2.5:7b-instruct"),
+            ("ollama", "gpt-oss:120b-cloud"),
+            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
+        ),
         "verify": _chain(
             ("ollama", "qwen2.5:7b-instruct"),
             ("ollama", "gpt-oss:120b-cloud"),

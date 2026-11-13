@@ -93,10 +93,11 @@ export interface Decision {
   kind: string;
   question: string;
   needs_user: boolean;
+  ask_user: boolean;
   options: { memory_id: string; text: string; source: string; trust: string; agent: string; recorded_at: number; quote: string }[];
   recommendation: { memory_id: string; reason: string };
   tried: { step: string; outcome: string }[];
-  default_at: number;
+  default_at: number | null;
 }
 
 export interface Pool {
@@ -304,6 +305,7 @@ export const api = {
   stmStats: () => req<any>("GET", "/v1/stm/stats"),
   scratchPools: () => req<any[]>("GET", "/v1/scratch-pools"),
   decisions: () => req<Decision[]>("GET", "/v1/decisions"),
+  autoReview: () => req<unknown>("POST", "/v1/review/auto"),
   sessions: () => req<Sessions>("GET", "/v1/dashboard/sessions"),
   poolMemories: (kind: Scope, id: string) => req<{ items: PoolMemory[]; now: number }>("GET", `/v1/dashboard/${kind}/${id}/memories`),
   timeline: (kind: Scope, id: string) => req<{ events: TimelineEvent[]; series: EvolutionPoint[] }>("GET", `/v1/dashboard/${kind}/${id}/timeline`),
