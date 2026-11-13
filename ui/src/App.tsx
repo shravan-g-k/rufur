@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrainIcon, CoinsIcon, DatabaseIcon, InboxIcon, LayoutDashboardIcon, MoonIcon, ShieldCheckIcon, SunIcon, TriangleAlertIcon, WorkflowIcon, LayersIcon, type LucideIcon } from "lucide-react";
+import { BrainIcon, CoinsIcon, DatabaseIcon, InboxIcon, NetworkIcon, LayoutDashboardIcon, MoonIcon, ShieldCheckIcon, SunIcon, TriangleAlertIcon, WorkflowIcon, LayersIcon, type LucideIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { MemorySheet } from "@/components/memory-sheet";
 import { AgentsPage } from "@/pages/agents";
 import { ForgettingPage } from "@/pages/forgetting";
+import { GraphPage } from "@/pages/graph";
 import { OverviewPage } from "@/pages/overview";
 import { ReviewPage } from "@/pages/review";
 import { Selection, SessionsPage } from "@/pages/sessions";
@@ -31,11 +32,12 @@ import { RawPage } from "@/pages/raw";
 import { TokensPage } from "@/pages/tokens";
 import { api, Sessions } from "@/api";
 
-type Page = "overview" | "sessions" | "tokens" | "forgetting" | "review" | "agents" | "raw";
+type Page = "overview" | "sessions" | "graph" | "tokens" | "forgetting" | "review" | "agents" | "raw";
 
 const PAGES: { id: Page; label: string; icon: LucideIcon; description: string }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboardIcon, description: "Memory across all sessions at a glance." },
   { id: "sessions", label: "Sessions & pools", icon: LayersIcon, description: "Each session, its subagent pools, and their short- and long-term memory." },
+  { id: "graph", label: "Graph", icon: NetworkIcon, description: "Entities, relations and how memories connect, and where each link is stored." },
   { id: "tokens", label: "Tokens", icon: CoinsIcon, description: "What memory costs and saves, over time." },
   { id: "forgetting", label: "Forgetting", icon: ShieldCheckIcon, description: "What was deleted, and the proof that it’s gone." },
   { id: "review", label: "Review", icon: InboxIcon, description: "Held memories and conflicts waiting on a decision." },
@@ -180,6 +182,7 @@ export default function App() {
             )}
             {page === "overview" && <OverviewPage data={sessions} version={version} onChanged={refresh} onSelectMemory={setMemory} onOpenSession={openSession} />}
             {page === "sessions" && <SessionsPage data={sessions} selection={pool} onSelectPool={setPool} onSelectMemory={setMemory} version={version} />}
+            {page === "graph" && <GraphPage version={version} onSelectMemory={setMemory} />}
             {page === "tokens" && <TokensPage version={version} />}
             {page === "forgetting" && <ForgettingPage version={version} />}
             {page === "review" && <ReviewPage version={version} onChanged={refresh} onSelectMemory={setMemory} />}

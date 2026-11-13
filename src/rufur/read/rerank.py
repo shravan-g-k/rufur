@@ -45,6 +45,11 @@ class _Lazy:
     def _load(self):
         raise NotImplementedError
 
+    @property
+    def state(self) -> str:
+        """loaded | not loaded yet (models load on first use) | failed: <why>, for /v1/health."""
+        return "loaded" if self._model is not None else f"failed: {self._error}" if self._error else "not loaded yet"
+
     def _ensure(self):
         with self._lock:
             if self._model is None and self._error is None:

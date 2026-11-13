@@ -87,7 +87,7 @@ def build(svc: "MemoryService", agent: str, session_id: str, project: str | None
         if items and used + cost > budget:
             continue
         used += cost
-        items.append(item_of(m, m["text"], m["importance"], 1.0))
+        items.append(item_of(m, m["text"], m["importance"], 1.0, clearance=flt.clearance))
     try:
         vecs = svc.embedder.embed([it["text"] for it in items]) if items else []
     except EmbedUnavailable:

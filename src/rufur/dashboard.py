@@ -12,6 +12,7 @@ import json
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from .forget import fade
 from .forget import receipts as receipts_mod
 from .forget.engine import REDACTED
 from .textutil import estimate_tokens, now
@@ -91,6 +92,7 @@ def sessions(svc: "MemoryService", agent: str, limit: int = 100) -> dict:
             **s, "events": len(ev), "redacted_events": sum(e["redacted"] for e in ev),
             "event_tokens": sum(estimate_tokens(e["content"]) for e in ev),
             "stm": tiers["stm"], "ltm": tiers["ltm"], "forgotten": _forgotten_count(svc, s["id"]),
+            "composition": _composition(svc, s["id"]),
             "pools": by_session.get(s["id"], []),
         })  # fmt: skip
     c = svc.cfg
@@ -121,6 +123,7 @@ def _totals(svc: "MemoryService") -> dict:
         "unsessioned": _tier_counts(svc, "m.session_id IS NULL AND p.kind != 'scratch'"),
         "scratch": _tier_counts(svc, "p.kind = 'scratch'"),
         "pools": pools,
+        "storage": _storage(svc),
     }  # fmt: skip
 
 
@@ -131,6 +134,50 @@ def _created_ids(svc: "MemoryService", key: str, value: str) -> list[str]:
     col = "session_id" if key == "session" else "pool_id"
     ids += [r["id"] for r in svc.db.all(f"SELECT id FROM memories WHERE {col} = ?", (value,))]
     return list(dict.fromkeys(ids))
+
+
+def _composition(svc: "MemoryService", session_id: str) -> dict[str, int]:
+    """Where every memory a session ever created sits now, each counted exactly once.
+
+    Live rows are bucketed by tier and status; rows that no longer exist are bucketed by the delete op the
+    ledger kept (forgotten on request, or purged after expiry/merge). Nothing is estimated.
+    """
+    out = dict.fromkeys(("ltm", "stm", "disputed", "held", "fading", "superseded", "expired", "rejected", "forgotten"), 0)
+    ids = _created_ids(svc, "session", session_id)
+    if not ids:
+        return out
+    marks = _marks(ids)
+    live = svc.db.all(f"SELECT id, tier, status, flags FROM memories WHERE id IN ({marks})", tuple(ids))
+    bucket = {"disputed": "disputed", "quarantined": "held", "superseded": "superseded", "archived": "expired",
+              "rejected": "rejected"}  # fmt: skip
+    for r in live:
+        if r["status"] == "archived" and f'"{fade.FADING}"' in r["flags"]:
+            out["fading"] += 1
+        else:
+            out[r["tier"] if r["status"] == "active" else bucket.get(r["status"], "expired")] += 1
+    gone = [i for i in ids if i not in {r["id"] for r in live}]
+    if gone:
+        for r in svc.db.all(
+            f"SELECT target, max(json_extract(payload, '$.reason') IS NULL) AS on_request FROM ops "
+            f"WHERE op = 'delete' AND target IN ({_marks(gone)}) GROUP BY target", tuple(gone)):  # fmt: skip
+            out["forgotten" if r["on_request"] else "expired"] += 1
+    return out
+
+
+def _storage(svc: "MemoryService") -> dict:
+    """How live long-term knowledge is physically kept: store per memory, plus the indexes and side tables."""
+    stores = {r["store"]: r["n"] for r in svc.db.all(
+        "SELECT store, count(*) AS n FROM memories WHERE tier = 'ltm' AND status IN ('active', 'disputed') GROUP BY store")}  # fmt: skip
+    return {
+        "stores": stores,
+        "edges": svc.db.scalar("SELECT count(*) FROM edges") or 0,
+        "entities": svc.db.scalar("SELECT count(*) FROM entities") or 0,
+        "typed_rows": svc.db.scalar("SELECT count(*) FROM typed_rows") or 0,
+        "tables": svc.db.scalar("SELECT count(*) FROM table_schemas") or 0,
+        "vectors": svc.db.scalar("SELECT count(*) FROM vec_map") or 0,
+        "events": svc.db.scalar("SELECT count(*) FROM events") or 0,
+        "ops": svc.db.scalar("SELECT count(*) FROM ops") or 0,
+    }
 
 
 def _forgotten_count(svc: "MemoryService", session_id: str) -> int:
@@ -281,10 +328,13 @@ def forgetting(svc: "MemoryService", agent: str) -> dict:
         f"AND agent IN ({_marks(agents)}) ORDER BY created_at DESC LIMIT 200", tuple(agents)
     ) if agents else []  # fmt: skip
     expiry = {r["k"]: r["n"] for r in svc.db.all(
-        "SELECT CASE WHEN op = 'archive' THEN 'archived' WHEN json_extract(payload, '$.reason') IS NULL THEN 'forgotten' "
+        "SELECT CASE WHEN op = 'archive' AND json_extract(payload, '$.reason') = 'unused' THEN 'faded' "
+        "WHEN op = 'archive' THEN 'archived' WHEN json_extract(payload, '$.reason') IS NULL THEN 'forgotten' "
         "ELSE 'purged' END AS k, count(*) AS n FROM ops WHERE op IN ('archive', 'delete') GROUP BY k")}  # fmt: skip
     return {
         "receipts": receipts_mod.list_receipts(svc.db, 100), "chain": receipts_mod.verify_chain(svc.cfg, svc.db),
         "redacted_events": redacted, "placeholder": REDACTED, "counts": expiry,
         "tombstones": svc.db.scalar("SELECT count(*) FROM tombstones"),
+        "fading": fade.fading(svc), "fade": {"after_days": svc.cfg.fade_after_days, "below": svc.cfg.fade_below,
+                                             "purge_days": svc.cfg.fade_purge_days},
     }  # fmt: skip

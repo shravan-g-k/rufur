@@ -6,7 +6,7 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
-LABELS = {"overview": "Overview", "sessions": "Sessions & pools", "tokens": "Tokens", "forgetting": "Forgetting",
+LABELS = {"overview": "Overview", "sessions": "Sessions & pools", "graph": "Graph", "tokens": "Tokens", "forgetting": "Forgetting",
           "review": "Review", "agents": "Handovers", "raw": "Raw data"}
 # Extra steps per view: (tab name to click, file suffix). Session views also capture their Timeline and Deleted tabs.
 TABS = {"sessions": ["Timeline", "Deleted"], "raw": ["Vector store", "Links"]}

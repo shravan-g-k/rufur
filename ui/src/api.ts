@@ -100,6 +100,27 @@ export interface Decision {
   default_at: number | null;
 }
 
+export interface GraphNode {
+  id: string;
+  kind: "memory" | "subject" | "entity";
+  label: string;
+  type?: string;
+  status?: string;
+  importance?: number;
+}
+
+export interface GraphLink {
+  source: string;
+  target: string;
+  kind: "relation" | "about" | "supersedes" | "co_source";
+  label?: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+}
+
 export interface Pool {
   id: string;
   name: string;
@@ -139,8 +160,11 @@ export interface SessionSummary {
   stm: Partial<Record<Status, number>>;
   ltm: Partial<Record<Status, number>>;
   forgotten: number;
+  composition: Record<CompositionKey, number>;
   pools: PoolSummary[];
 }
+
+export type CompositionKey = "ltm" | "stm" | "disputed" | "held" | "fading" | "superseded" | "expired" | "rejected" | "forgotten";
 
 export interface Ttl {
   base_h: number;
@@ -160,6 +184,16 @@ export interface Sessions {
     unsessioned: TierCounts;
     scratch: TierCounts;
     pools: Record<string, { open: number; closed: number }>;
+    storage: {
+      stores: Record<string, number>;
+      edges: number;
+      entities: number;
+      typed_rows: number;
+      tables: number;
+      vectors: number;
+      events: number;
+      ops: number;
+    };
   };
   ttl: Ttl;
   now: number;
@@ -235,8 +269,20 @@ export interface Forgetting {
   chain: { receipts: number; valid: boolean; problems: { receipt: string; problem: string }[]; resurfaced_memories: string[] };
   redacted_events: { id: string; session_id: string | null; agent: string; role: string; content: string; created_at: number }[];
   placeholder: string;
-  counts: Partial<Record<"archived" | "forgotten" | "purged", number>>;
+  counts: Partial<Record<"archived" | "faded" | "forgotten" | "purged", number>>;
   tombstones: number;
+  fading: {
+    id: string;
+    text: string;
+    type: string;
+    store: string;
+    importance: number;
+    access_count: number;
+    last_accessed: number | null;
+    created_at: number;
+    purge_at: number;
+  }[];
+  fade: { after_days: number; below: number; purge_days: number };
 }
 
 export interface RawColumn {
@@ -305,6 +351,7 @@ export const api = {
   stmStats: () => req<any>("GET", "/v1/stm/stats"),
   scratchPools: () => req<any[]>("GET", "/v1/scratch-pools"),
   decisions: () => req<Decision[]>("GET", "/v1/decisions"),
+  graph: () => req<GraphData>("GET", "/v1/graph?limit=300"),
   autoReview: () => req<unknown>("POST", "/v1/review/auto"),
   sessions: () => req<Sessions>("GET", "/v1/dashboard/sessions"),
   poolMemories: (kind: Scope, id: string) => req<{ items: PoolMemory[]; now: number }>("GET", `/v1/dashboard/${kind}/${id}/memories`),

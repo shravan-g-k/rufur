@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { RedactedText } from "@/components/memory-ui";
 import { cn } from "@/lib/utils";
-import { api, clock, Forgetting, Probe, Receipt, since } from "@/api";
+import { api, clock, Forgetting, Probe, Receipt, since, until } from "@/api";
 
 export const PROBE_LABEL: Record<string, string> = {
   memories: "Memory rows",
@@ -116,9 +116,7 @@ function ReceiptDetail({ r }: { r: Receipt }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>
-          {pct === null ? "Forgotten without probes" : `${pct}% of deletion checks passed`}
-        </CardTitle>
+        <CardTitle>{pct === null ? "Forgotten without probes" : `${pct}% of deletion checks passed`}</CardTitle>
         <CardDescription>
           {r.memory_ids.length} {r.memory_ids.length === 1 ? "memory" : "memories"} forgotten by {r.agent} on {clock(r.issued_at)}.
         </CardDescription>
@@ -216,9 +214,50 @@ export function ForgettingPage({ version }: { version: number }) {
         <Kpi label="Forgotten on request" value={data.counts.forgotten ?? 0} />
         <Kpi label="Average completeness" value={avgPct === null ? "–" : `${avgPct}%`} />
         <Kpi label="Messages redacted" value={data.redacted_events.length} />
-        <Kpi label="Expired from short-term" value={(data.counts.archived ?? 0) + (data.counts.purged ?? 0)} />
+        <Kpi
+          label="Expired or decayed"
+          value={(data.counts.archived ?? 0) + (data.counts.purged ?? 0)}
+          hint={`${data.counts.faded ?? 0} faded from long-term`}
+        />
         <Kpi label="Blocked from relearning" value={data.tombstones} hint="tombstones" />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Fading</CardTitle>
+          <CardDescription>
+            Long-term memories nobody has recalled for {data.fade.after_days} days and whose retention score fell below {data.fade.below}. Agents don’t see
+            them, but any recall that matches one brings it straight back. Still unused after {data.fade.purge_days} days here, it is deleted (no tombstone, so
+            it can be learned again). Pinned memories, decisions, anything you confirmed, your profile and procedures never fade.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {data.fading.length === 0 ? (
+            <p className="text-muted-foreground text-sm">Nothing is fading.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Memory</TableHead>
+                  <TableHead className="text-right">Times used</TableHead>
+                  <TableHead>Last used</TableHead>
+                  <TableHead>Deleted</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.fading.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell className="max-w-xl whitespace-normal">{m.text}</TableCell>
+                    <TableCell className="text-right tabular-nums">{m.access_count}</TableCell>
+                    <TableCell>{m.last_accessed ? since(m.last_accessed) : "never"}</TableCell>
+                    <TableCell>{until(m.purge_at)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {data.receipts.length === 0 ? (
         <Empty className="border">

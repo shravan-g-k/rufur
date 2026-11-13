@@ -41,7 +41,7 @@ $D down
 | `up [--live]` | wipes `$RUFUR_HOME` and starts the daemon. `--live` uses the real Ollama models (smoke still takes about 6 s). |
 | `smoke` | 11 checks: health, remember, cross-agent recall, abstain, bootstrap, MCP `tools/list` + `tools/call recall`, pool spawn/close, consolidate, doctor |
 | `api METHOD PATH [JSON] [AGENT]` | one raw REST call as `X-Rufur-Agent: AGENT` (default `claude-code`) |
-| `shot VIEW…` | views: `overview sessions tokens forgetting review agents raw` (`sessions` also captures its Timeline and Deleted tabs, `raw` its Vector store and Links tabs). Waits for the "Live" badge (SSE connected). `RUFUR_SHOT_DARK=1` for dark mode, `RUFUR_SHOT_WIDTH=390` for a phone. |
+| `shot VIEW…` | views: `overview sessions graph tokens forgetting review agents raw` (`sessions` also captures its Timeline and Deleted tabs, `raw` its Vector store and Links tabs). Waits for the "Live" badge (SSE connected). `RUFUR_SHOT_DARK=1` for dark mode, `RUFUR_SHOT_WIDTH=390` for a phone. |
 | `down` | `rufur stop` for that home |
 
 Env: `RUFUR_HOME` (default `$TMPDIR/rufur-run`), `RUFUR_PORT` (default `7600`), `RUFUR_SHOTS`.

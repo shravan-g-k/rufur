@@ -49,11 +49,12 @@ Without the extension, do those steps yourself:
 ## Conflicts
 RUFUR settles most conflicts itself, using rules, the evidence count and its own model. You only see the ones it couldn't settle. They arrive as `decisions_needed` in recall output, in a `<decisions-needed>` block in your context, or from `rufur.py decisions`.
 
-1. **If the conversation or the task tells you which is right, decide it yourself:**
+**Required: settle every conflict you are shown in the same turn,** so they don't pile up. For each one:
+1. **If the conversation or the task tells you which is right, decide it now:**
    `rufur.py resolve CONFLICT_ID --winner MEMORY_ID --reason "user said so today"`
    - If both are true in different contexts, use `--action both`. If neither is right, use `--action neither`.
-2. **Ask the user only if `needs_user` is true**, or if you really can't tell and it matters for the task. Ask one short question, then pass `--by user`.
-3. **Otherwise carry on.** Undecided conflicts get a safe default after 7 days.
+2. **If `needs_user` or `ask_user` is true, ask the user one short question in this reply.** When they answer, run `rufur.py resolve ... --by user` right away. Never pick a winner yourself for these.
+3. **Otherwise take RUFUR's recommendation:** `rufur.py resolve CONFLICT_ID --winner <recommended id> --reason "recommended default"`, then carry on.
 
 ## Subagents
 Before delegating to a subagent (another `pi` process), give it a scoped memory pool:

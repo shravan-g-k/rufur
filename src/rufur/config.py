@@ -121,7 +121,10 @@ class Config:
     forget_judge_max: int = 30  # candidates handed to the LLM that decides what the request covers
 
     # Forgetting
-    archive_below: float = 0.15
+    # Intelligent forgetting (forget/fade.py): unused long-term memories fade, then go if still unused.
+    fade_after_days: float = 30.0  # not recalled for this long → candidate for the fading tier
+    fade_below: float = 0.45  # ...and retention score under this (importance, recency of use, use count)
+    fade_purge_days: float = 30.0  # fading this long without being used again → hard delete (no tombstone)
     retention_days: int = 90
 
     # Short-term memory (user-scoped, shared by all of a user's agents)

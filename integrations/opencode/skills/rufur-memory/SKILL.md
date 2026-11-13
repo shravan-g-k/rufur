@@ -39,10 +39,10 @@ RUFUR settles most conflicts itself:
 
 You only see the conflicts it couldn't settle. They arrive as `decisions_needed` in recall results, as a `<decisions-needed>` block in your context, from `pending_decisions()`, or as `conflict.status == "open"` on a `remember` result.
 
-How to handle one:
-1. **Decide it yourself when the conversation or the task tells you which is right.** Call `resolve_conflict(conflict_id, action="keep", winner=<memory_id>, reason=...)`. If both are true in different situations, use `action="both", scopes={id: "at work", ...}`. If neither is right, use `action="neither"`.
-2. **Ask the user only when `needs_user` is true** (a less trusted source would replace something the user said), or when you really can't tell and the answer matters for the current task. Ask in one short question, then pass `decided_by="user"`. RUFUR accepts that only if the user just wrote to you.
-3. **Otherwise carry on.** Mention the uncertainty if it affects your answer, and don't block the task. Undecided conflicts get a safe default after 7 days: the more trusted, then the newer, version wins, and the loser is kept in history.
+**Required: settle every conflict you are shown in the same turn.** Don't leave it for later and don't let them pile up. For each one:
+1. **If the conversation or the task tells you which is right, decide it now.** Call `resolve_conflict(conflict_id, action="keep", winner=<memory_id>, reason=...)`. If both are true in different situations, use `action="both", scopes={id: "at work", ...}`. If neither is right, use `action="neither"`.
+2. **If `needs_user` or `ask_user` is true, ask the user one short question in this reply** (e.g. "I have two names for you, Aarav Mehta and Shravan G Kulal. Which is right?"). When they answer, call `resolve_conflict(..., decided_by="user")` right away. RUFUR accepts that only if the user just wrote to you. Never pick a winner yourself for these.
+3. **Otherwise take RUFUR's `recommendation`.** Call `resolve_conflict(conflict_id, action="keep", winner=<recommendation.memory_id>, reason="recommended default")`. Then carry on with the task and mention the uncertainty if it affects your answer.
 
 Use `confirm_memory(id)` only to approve or reject one specific memory. Approving a held (quarantined) memory always needs the user.
 

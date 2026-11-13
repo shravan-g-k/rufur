@@ -22,9 +22,27 @@ ROLE_SOURCE = {"user": "user", "assistant": "agent", "tool": "tool", "document":
 _INSTRUCTION_LIKE = re.compile(
     r"\b(ignore (all |any )?(previous|prior|above)|disregard (the|all|previous)|you must|you are now|"
     r"system prompt|always (answer|respond|say|reply)|from now on|do not tell|new instructions|"
-    r"override|act as|pretend (to be|you))\b",
+    r"override|act as|pretend (to be|you))\b"
+    # Exfiltration: text asking whoever reads it to reveal, send or dump secrets.
+    r"|\b(reveal|print|output|dump|list|share|send|post|leak|spill|exfiltrate|upload|email|paste|show|display|include)\b"
+    r"[^.\n]{0,60}(\b(secrets?|api[ _-]?keys?|keys|tokens?|passwords?|credentials?|env(ironment)? var\w*|ssh key|private key)\b|\.env\b)",
     re.I,
 )
+
+# Secret-shaped strings. Masked in everything recall hands to an agent, whatever the memory's label says,
+# so a planted "print every key you know" has nothing to print.
+_SECRET_TOKENS = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"
+    r"|\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{16,}|\b(ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{20,}"
+    r"|\bxox[abposr]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}\b|\bglpat-[A-Za-z0-9_-]{20}"
+    r"|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+    re.S,
+)
+_SECRET_ASSIGN = re.compile(
+    r"\b((?:password|passwd|pwd|secret|token|api[ _-]?key|access[ _-]?key|client[ _-]?secret)\s*(?:is|=|:)\s*)([^\s,;]{4,})", re.I
+)
+_URL_CREDS = re.compile(r"(\w+://[^\s:/@]+:)([^\s@/]+)(@)")
+SECRET_MASK = "[secret withheld]"
 
 
 def trust_for(source_type: str) -> str:
@@ -41,6 +59,12 @@ def trust_at_least(trust: str, floor: str) -> bool:
 
 def instruction_like(text: str) -> bool:
     return bool(_INSTRUCTION_LIKE.search(text))
+
+
+def mask_secrets(text: str) -> str:
+    text = _SECRET_TOKENS.sub(SECRET_MASK, text)
+    text = _SECRET_ASSIGN.sub(lambda m: m.group(1) + SECRET_MASK, text)
+    return _URL_CREDS.sub(lambda m: m.group(1) + SECRET_MASK + m.group(3), text)
 
 
 def can_read(clearance: str, sensitivity: str) -> bool:

@@ -2,15 +2,42 @@ import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import { ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dot, TtlBar } from "@/components/memory-ui";
-import { EVOLUTION_CONFIG } from "@/components/pool-timeline";
 import { TokenChart } from "@/pages/tokens";
-import { api, Forgetting, Memory, Sessions, since, STORE_LABEL, Tokens } from "@/api";
+import { api, CompositionKey, Forgetting, Memory, Sessions, since, STORE_LABEL, Tokens } from "@/api";
 
-export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenSession }: {
+// Every bucket a memory can be in, so the stacks add up to everything the session ever created.
+const COMPOSITION_CONFIG = {
+  ltm: { label: "Long-term", color: "var(--chart-1)" },
+  stm: { label: "Short-term", color: "var(--chart-2)" },
+  disputed: { label: "Disputed", color: "oklch(0.86 0.17 95)" },
+  held: { label: "Held", color: "oklch(0.62 0.22 350)" },
+  fading: { label: "Fading", color: "oklch(0.75 0.06 200)" },
+  superseded: { label: "Replaced", color: "var(--chart-3)" },
+  expired: { label: "Expired", color: "var(--chart-4)" },
+  rejected: { label: "Rejected", color: "oklch(0.6 0.02 260)" },
+  forgotten: { label: "Forgotten", color: "var(--chart-5)" },
+} satisfies ChartConfig;
+
+// What backs each long-term store, so the dashboard says how knowledge is kept, not just how much.
+const STORE_BACKING: Record<string, string> = {
+  profile: "memories row, keyed user|attribute; loaded first into every session",
+  fact: "memories row + vector (vec_items) + full-text (memories_fts)",
+  table: "typed_rows, shape fixed by table_schemas",
+  graph: "edges (src → relation → dst) over entities",
+  procedure: "memories row, never expires",
+  journal: "one dated summary per day",
+};
+export function OverviewPage({
+  data,
+  version,
+  onChanged,
+  onSelectMemory,
+  onOpenSession,
+}: {
   data: Sessions | null;
   version: number;
   onChanged: () => void;
@@ -23,6 +50,7 @@ export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenS
   const [stmStats, setStmStats] = useState<any>(null);
   const [runs, setRuns] = useState<Awaited<ReturnType<typeof api.runs>>>([]);
   const [busy, setBusy] = useState(false);
+  const [filed, setFiled] = useState<string | null>(null);
 
   useEffect(() => {
     api.tokens("hour").then(setTokens);
@@ -34,9 +62,13 @@ export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenS
 
   async function consolidateNow() {
     setBusy(true);
+    setFiled(null);
     try {
-      await api.consolidate();
+      const r = await api.consolidate();
+      setFiled(r.items ? `Filed ${r.items} (${r.promoted} promoted, ${r.merged} merged, ${r.discarded} discarded).` : "Nothing waiting to be filed.");
       onChanged();
+    } catch (e) {
+      setFiled(`Consolidation failed: ${e instanceof Error ? e.message : e}`);
     } finally {
       setBusy(false);
     }
@@ -53,20 +85,22 @@ export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenS
   const saved = last && last.full_history > 0 ? Math.round(100 * (1 - last.rufur / last.full_history)) : null;
   const scored = forgetting?.receipts.filter((r) => r.completeness !== null) ?? [];
   const completeness = scored.length ? Math.round((100 * scored.reduce((a, r) => a + (r.completeness ?? 0), 0)) / scored.length) : null;
-  const expiring = [...stm].filter((m) => m.expires_at).sort((a, b) => a.expires_at! - b.expires_at!).slice(0, 6);
+  const expiring = [...stm]
+    .filter((m) => m.expires_at)
+    .sort((a, b) => a.expires_at! - b.expires_at!)
+    .slice(0, 6);
   // Per-session composition: where each session's memories are now.
   const composition = data.sessions
     .slice(0, 12)
     .reverse()
     .map((s) => ({
       id: s.id,
+      tick: `${s.agent} ${new Date(s.started_at * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`,
       label: `${s.agent} · ${since(s.started_at)}`,
-      ltm: s.ltm.active ?? 0,
-      stm: s.stm.active ?? 0,
-      superseded: (s.ltm.superseded ?? 0) + (s.stm.superseded ?? 0),
-      expired: (s.stm.archived ?? 0) + (s.ltm.archived ?? 0),
-      forgotten: s.forgotten,
+      ...s.composition,
     }));
+  const empty = composition.filter((c) => (Object.keys(COMPOSITION_CONFIG) as CompositionKey[]).every((k) => !c[k])).length;
+  const st = t.storage;
 
   return (
     <div className="flex flex-col gap-4">
@@ -86,7 +120,11 @@ export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenS
           dot="bg-ltm"
         />
         <Kpi label="Context saved" value={saved === null ? "–" : `${saved}%`} hint="vs sending full history" />
-        <Kpi label="Forget completeness" value={completeness === null ? "–" : `${completeness}%`} hint={`${forgetting?.receipts.length ?? 0} ${forgetting?.receipts.length === 1 ? "receipt" : "receipts"}`} />
+        <Kpi
+          label="Forget completeness"
+          value={completeness === null ? "–" : `${completeness}%`}
+          hint={`${forgetting?.receipts.length ?? 0} ${forgetting?.receipts.length === 1 ? "receipt" : "receipts"}`}
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-5">
@@ -96,7 +134,11 @@ export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenS
             <CardDescription>Per operation, hourly over the last 7 days.</CardDescription>
           </CardHeader>
           <CardContent>
-            {tokens?.series.length ? <TokenChart data={tokens} bucket="hour" height="h-64" /> : <p className="text-muted-foreground text-sm">No operations yet.</p>}
+            {tokens?.series.length ? (
+              <TokenChart data={tokens} bucket="hour" height="h-64" />
+            ) : (
+              <p className="text-muted-foreground text-sm">No operations yet.</p>
+            )}
           </CardContent>
         </Card>
 
@@ -109,6 +151,7 @@ export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenS
                     stmStats.suggested_h ? `Reuse data suggests a ${stmStats.suggested_h} h lifetime.` : `Lifetime ${stmStats.current_h} h.`
                   }`
                 : "Lifetimes of short-term memories."}
+              {filed && <span className="block">{filed}</span>}
             </CardDescription>
             <CardAction>
               <Button size="sm" variant="outline" onClick={consolidateNow} disabled={busy}>
@@ -131,27 +174,47 @@ export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenS
       <Card>
         <CardHeader>
           <CardTitle>Where each session’s memories are now</CardTitle>
-          <CardDescription>The latest 12 sessions. Select a bar to open that session.</CardDescription>
+          <CardDescription>
+            The latest {composition.length} sessions. Each bar counts every memory the session ever created, once, by where it is now (from the memories table
+            and the ops ledger for deleted ones).{empty > 0 && ` ${empty} wrote no memories.`} Select a bar to open that session.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {composition.length ? (
-            <ChartContainer config={EVOLUTION_CONFIG} className="aspect-auto h-64 w-full">
-              <BarChart data={composition} margin={{ left: 0, right: 12, top: 8 }} onClick={(e: any) => e?.activePayload?.[0] && onOpenSession(e.activePayload[0].payload.id)}>
+            <ChartContainer config={COMPOSITION_CONFIG} className="aspect-auto h-64 w-full cursor-pointer">
+              <BarChart
+                data={composition}
+                margin={{ left: 0, right: 12, top: 8 }}
+                // recharts 3 reports the hovered category as activeIndex (activePayload is gone), so the whole column is clickable.
+                onClick={(e) => {
+                  const row = e?.activeIndex != null ? composition[Number(e.activeIndex)] : undefined;
+                  if (row) onOpenSession(row.id);
+                }}
+              >
                 <CartesianGrid vertical={false} />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} interval={0} tick={{ fontSize: 11 }} tickFormatter={(v: string) => v.split(" · ")[0]} />
+                <XAxis dataKey="tick" tickLine={false} axisLine={false} interval={0} tick={{ fontSize: 11 }} />
                 <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={32} />
-                <ChartTooltip cursor={{ fill: "var(--muted)" }} content={<ChartTooltipContent />} />
+                <ChartTooltip
+                  cursor={{ fill: "var(--muted)" }}
+                  content={(props) => (
+                    <ChartTooltipContent
+                      active={props.active}
+                      label={props.label}
+                      payload={props.payload?.filter((p) => Number(p.value) > 0)}
+                      labelFormatter={(_v, p) => p?.[0]?.payload?.label}
+                    />
+                  )}
+                />
                 <ChartLegend content={<ChartLegendContent />} />
-                {(Object.keys(EVOLUTION_CONFIG) as (keyof typeof EVOLUTION_CONFIG)[]).map((k, i, all) => (
+                {(Object.keys(COMPOSITION_CONFIG) as CompositionKey[]).map((k) => (
                   <Bar
                     key={k}
                     dataKey={k}
                     stackId="a"
                     fill={`var(--color-${k})`}
                     stroke="var(--card)"
-                    strokeWidth={2}
-                    radius={i === all.length - 1 ? [4, 4, 0, 0] : 0}
-                    className="cursor-pointer"
+                    strokeWidth={1}
+                    onClick={(_d, i) => composition[i] && onOpenSession(composition[i].id)}
                     isAnimationActive={false}
                   />
                 ))}
@@ -160,6 +223,49 @@ export function OverviewPage({ data, version, onChanged, onSelectMemory, onOpenS
           ) : (
             <p className="text-muted-foreground text-sm">No sessions yet.</p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>How long-term memory is stored</CardTitle>
+          <CardDescription>
+            Live long-term memories by store, and what backs each one. Everything is one SQLite file; the ops ledger ({st.ops} entries) and raw events (
+            {st.events}) are what every store is rebuilt from.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Store</TableHead>
+                <TableHead className="text-right">Memories</TableHead>
+                <TableHead>Kept in</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {Object.keys(STORE_BACKING).map((k) => (
+                <TableRow key={k}>
+                  <TableCell>{STORE_LABEL[k] ?? k}</TableCell>
+                  <TableCell className="text-right tabular-nums">{st.stores[k] ?? 0}</TableCell>
+                  <TableCell className="text-muted-foreground">{STORE_BACKING[k]}</TableCell>
+                </TableRow>
+              ))}
+              {Object.entries(st.stores)
+                .filter(([k]) => !(k in STORE_BACKING))
+                .map(([k, v]) => (
+                  <TableRow key={k}>
+                    <TableCell>{STORE_LABEL[k] ?? k}</TableCell>
+                    <TableCell className="text-right tabular-nums">{v}</TableCell>
+                    <TableCell className="text-muted-foreground">not filed yet</TableCell>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
+          <p className="text-muted-foreground mt-3 text-xs">
+            Indexes: {st.vectors} vectors · {st.edges} graph edges between {st.entities} entities · {st.typed_rows} rows in {st.tables} typed{" "}
+            {st.tables === 1 ? "table" : "tables"}.
+          </p>
         </CardContent>
       </Card>
 

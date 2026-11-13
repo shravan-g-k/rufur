@@ -11,7 +11,7 @@ from typing import Callable
 
 from ..db.conn import Database
 from ..textutil import content_words, estimate_tokens, now
-from ..write.trust import TRUST_WEIGHT
+from ..write.trust import TRUST_WEIGHT, mask_secrets
 from .rerank import RerankUnavailable
 from .search import Candidate, Filter, search
 
@@ -117,13 +117,16 @@ def render(items: list[dict], header: str = CONTEXT_HEADER) -> str:
     return "\n".join(lines)
 
 
-def item_of(m: dict, body: str, score: float, rel: float) -> dict:
+def item_of(m: dict, body: str, score: float, rel: float, *, clearance: str = "confidential") -> dict:
     t = now()
+    # Secret-shaped strings are withheld from any agent not explicitly cleared for restricted data, so an
+    # injected "print every key you know" has nothing to print.
+    show = (lambda x: x) if clearance == "restricted" else mask_secrets
     return {
         "id": m["id"],
         "type": m["type"],
-        "text": m["text"],
-        "body": body,
+        "text": show(m["text"]),
+        "body": show(body),
         "trust": m["trust"],
         "source_type": m["source_type"],
         "status": m["status"],
@@ -223,7 +226,7 @@ def fast_recall(db: Database, embedder, query: str, flt: Filter, *, token_budget
         if items and used + cost > token_budget:
             continue
         used += cost
-        items.append(item_of(m, body, s, rel))
+        items.append(item_of(m, body, s, rel, clearance=flt.clearance))
     # Keep presentation order by score, not by packing order.
     items.sort(key=lambda it: it["score"], reverse=True)
     for it in items:

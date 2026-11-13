@@ -119,3 +119,16 @@ def test_raw_catalog_and_rows_are_read_only_and_ui_only(client, service):
     assert client.get("/v1/raw/tables/nope", headers=UI).status_code == 404
     assert client.get('/v1/raw/tables/memories?column=x"; DROP TABLE memories;--&value=1', headers=UI).status_code == 400
     assert vec["columns"].count("rowid") == 1
+
+
+def test_session_composition_counts_every_memory_once(client):
+    sid, _ = seed(client)
+    client.post("/v1/consolidate", json={}, headers=CC)
+    lisbon = next(m for m in get(client, f"/v1/dashboard/session/{sid}/memories")["items"] if "Lisbon" in m["text"])
+    client.post("/v1/forget", json={"memory_id": lisbon["id"]}, headers=UI)
+
+    out = get(client, "/v1/dashboard/sessions")
+    s = next(x for x in out["sessions"] if x["id"] == sid)
+    # Two memories were created; one is now long-term, one was forgotten (its row is gone, the op isn't).
+    assert s["composition"] == {**dict.fromkeys(s["composition"], 0), "ltm": 1, "forgotten": 1}
+    assert out["totals"]["storage"]["stores"] and out["totals"]["storage"]["vectors"] >= 1

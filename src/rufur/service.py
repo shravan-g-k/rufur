@@ -22,6 +22,7 @@ from .db.conn import Database, dumps
 from .embed import EmbedUnavailable, make_embedder
 from .events_bus import EventBus
 from .forget import engine as forget_engine
+from .forget import fade as fade_mod
 from .forget import receipts as receipts_mod
 from .forget.purge import purge_memories
 from . import handover as ho
@@ -41,7 +42,7 @@ from .write.chunk import at_least, detect_sensitivity, salient_chunks
 from .write.extract import extract_claims
 from .write.importance import retention_score
 from .write.pipeline import ClaimIn, WritePath
-from .write.trust import ROLE_SOURCE, SENSITIVITY_ORDER, TRUST_ORDER
+from .write.trust import ROLE_SOURCE, SENSITIVITY_ORDER, TRUST_ORDER, mask_secrets
 
 
 log = logging.getLogger("rufur.service")
@@ -612,14 +613,20 @@ class MemoryService:
                    "latency_ms": round((time.perf_counter() - started) * 1000, 2), "used_vector": True}  # fmt: skip
         else:
             flt = self._filter(agent, pool=pool)
-            out = fast_recall(self.db, self.embedder, query, flt, token_budget=token_budget or self.cfg.default_token_budget,
-                              threshold=self.cfg.abstain_threshold if threshold is None else threshold,
-                              half_life_days=self.cfg.recency_half_life_days, k=self.cfg.candidate_k,
-                              verifier=self.verifier if (threshold is None and verify) else None,
-                              verify_band=tuple(self.cfg.verify_band),
-                              exclude=ws["sent"] if (ws and exclude_sent) else None,
-                              reranker=self.fast_reranker, rerank_top_n=self.cfg.rerank_top_n)  # fmt: skip
-            res = out.as_dict()
+
+            def run() -> dict:
+                return fast_recall(self.db, self.embedder, query, flt, token_budget=token_budget or self.cfg.default_token_budget,
+                                   threshold=self.cfg.abstain_threshold if threshold is None else threshold,
+                                   half_life_days=self.cfg.recency_half_life_days, k=self.cfg.candidate_k,
+                                   verifier=self.verifier if (threshold is None and verify) else None,
+                                   verify_band=tuple(self.cfg.verify_band),
+                                   exclude=ws["sent"] if (ws and exclude_sent) else None,
+                                   reranker=self.fast_reranker, rerank_top_n=self.cfg.rerank_top_n).as_dict()  # fmt: skip
+
+            res = run()
+            # A fading memory that answers this question is being used, so it comes back before we answer.
+            if self._revive_fading(agent, query, pool):
+                res = run()
         ids = [it["id"] for it in res["items"]]
         if ws is not None:
             ws["sent"].update(ids)
@@ -638,6 +645,14 @@ class MemoryService:
             self.ledger.audit(agent, "recall", None, {"items": ids})
             self.bus.publish("recall", agent=agent, items=ids, abstained=res["abstained"])
         return res
+
+    def _revive_fading(self, agent: str, query: str, pool: str | None) -> list[str]:
+        flt = self._filter(agent, pool=pool, statuses=("archived",))
+        if flt.empty:
+            return []
+        hits = fast_recall(self.db, self.embedder, query, flt, token_budget=400, threshold=self.cfg.abstain_threshold,
+                           half_life_days=self.cfg.recency_half_life_days, k=5)  # fmt: skip
+        return fade_mod.revive(self, [it["id"] for it in hits.items], agent)
 
     def _decisions_for(self, memory_ids: list[str]) -> list[dict]:
         if not memory_ids:
@@ -662,6 +677,7 @@ class MemoryService:
                           header="Memories from the past. Items with until=... are no longer current. " + CONTEXT_HEADER)  # fmt: skip
         res = out.as_dict()
         res["path"] = "past"
+        fade_mod.revive(self, [it["id"] for it in res["items"]], agent)
         self.ledger.metric("recall", res["latency_ms"], path="past", agent=agent, tokens_in=estimate_tokens(query),
                            tokens_out=res["tokens"], meta={"abstained": res["abstained"], "items": len(res["items"])})  # fmt: skip
         self.ledger.audit(agent, "recall_past", None, {"items": [it["id"] for it in res["items"]]})
@@ -715,6 +731,11 @@ class MemoryService:
         m["edges"] = self.db.all("SELECT src, relation, dst FROM edges WHERE memory_id = ?", (memory_id,))
         m["pool"] = self._pool(m["pool_id"])["name"]
         m["retention_score"] = retention_score(m, self.cfg.recency_half_life_days)
+        if agent != "ui" and self.agent(agent)["clearance"] != "restricted":
+            # Only the user's dashboard and agents cleared for restricted data see secrets; sources are masked too.
+            m["text"], m["value"] = mask_secrets(m["text"]), mask_secrets(m["value"])
+            for s in m["sources"]:
+                s["quote"] = mask_secrets(s["quote"] or "")
         self.ledger.audit(agent, "inspect", memory_id)
         return m
 
@@ -841,22 +862,8 @@ class MemoryService:
             self.bus.publish("memory.deleted", id=mid)
 
     def auto_forget(self, agent: str = "system") -> dict:
-        """Archive low-value memories; hard-delete archived ones past the pool's retention window."""
-        archived, deleted = [], []
-        for m in self.db.all("SELECT * FROM memories WHERE status = 'active' AND pinned = 0 AND type != 'decision'"):
-            if retention_score(m, self.cfg.recency_half_life_days) < self.cfg.archive_below:
-                self.ledger.update_memory(m["id"], status="archived")
-                self.ledger.op("archive", m["id"], agent)
-                archived.append(m["id"])
-        for m in self.db.all(
-            "SELECT m.id, m.updated_at, p.retention_days FROM memories m JOIN pools p ON p.id = m.pool_id "
-            "WHERE m.status = 'archived' AND m.pinned = 0 AND m.type != 'decision'"
-        ):
-            if m["retention_days"] and now() - m["updated_at"] > m["retention_days"] * 86400:
-                deleted.append(m["id"])
-        if deleted:
-            forget_engine.forget(self.cfg, self.db, self.ledger, self.embedder, self.llm, deleted, agent, verify=False)
-        return {"archived": archived, "deleted": deleted}
+        """Move unused long-term memories to the fading tier; purge those that stayed unused there."""
+        return fade_mod.fade(self, agent)
 
     # -------------------------------------------------------------- handover
 
@@ -1023,6 +1030,7 @@ class MemoryService:
     def sweep(self) -> dict:
         out = stm_mod.sweep(self)
         out["decisions_defaulted"] = resolve_mod.apply_defaults(self)
+        out["fading"] = fade_mod.fade(self)
         # Forgotten content that came back by a path that skipped the write-time tombstone check.
         back = receipts_mod.recheck(self.db)
         if back:
@@ -1247,6 +1255,9 @@ class MemoryService:
             "home": str(self.cfg.home),
             "memories": self.db.scalar("SELECT count(*) FROM memories"),
             "embedder": self.embedder.name,
+            # Recall falls back to no reranking if a model fails to load, so say which one is really in use.
+            "rerankers": {role: {"model": r.model_name, "state": r.state} if r is not None else {"model": "none", "state": "off"}
+                          for role, r in (("recall", self.fast_reranker), ("forget", self.deep_reranker))},  # fmt: skip
             "offline": self.cfg.offline,
             "ollama": ollama,
         }
@@ -1268,8 +1279,9 @@ def _claim_in(claim) -> ClaimIn:
 
 def _render_decisions(decisions: list[dict]) -> str:
     """Open conflicts as a block the calling agent can act on."""
-    lines = ['<decisions-needed note="RUFUR could not settle these. Decide from the conversation if you can; '
-             'if needs_user is true, ask the user. Answer with resolve_conflict.">']
+    lines = ['<decisions-needed note="RUFUR could not settle these. Settle each one now with resolve_conflict: decide '
+             'from the conversation if you can; if needs_user is true, ask the user one short question and pass '
+             'decided_by=user; otherwise keep the recommended one.">']
     for d in decisions:
         opts = " | ".join(f'{o["memory_id"]}: "{o["text"]}" ({o["source"]}, {o["trust"]} trust)' for o in d["options"])
         lines.append(f'<decision id="{d["conflict_id"]}" needs_user="{str(d["needs_user"]).lower()}" '
