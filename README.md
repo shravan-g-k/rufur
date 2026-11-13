@@ -323,7 +323,7 @@ On start the daemon also warms the embedder and reranker and back-fills embeddin
 
 ## 12. LLM and embedding layer
 
-- **Roles, not models.** Code asks for a role (`extract`, `classify`, `consolidate`, `resolve`, `review`, `verify`, `forget`, `probe`, `answer`). Each role has a provider chain in `config.py`/`config.toml`; defaults are local `qwen2.5:7b-instruct`, then Ollama cloud `gpt-oss:120b-cloud`, then Groq `llama-3.3-70b-versatile` (used only if `GROQ_API_KEY` is set). `probe` uses `qwen3.5:4b` then `qwen2.5:7b-instruct`.
+- **Roles, not models.** Code asks for a role (`extract`, `classify`, `consolidate`, `resolve`, `review`, `verify`, `forget`, `probe`, `answer`). Each role has a provider chain in `config.py`/`config.toml`; defaults are Groq `openai/gpt-oss-120b` (used only if `GROQ_API_KEY` is set), then local `qwen2.5:7b-instruct`, then Ollama cloud `gpt-oss:120b-cloud`. Put `GROQ_API_KEY=...` in `~/.rufur/.env` so the daemon and eval scripts always have it. `probe` uses `qwen3.5:4b` then `qwen2.5:7b-instruct`.
 - **Structured output only.** Each call passes a Pydantic JSON schema (`format` for Ollama, `response_format` for OpenAI-compatible). Invalid output is retried once on the same hop, then the next hop is tried. A connection error marks that hop down for 30 s so a stopped Ollama doesn't add a timeout to every call.
 - **`LLMUnavailable` is a first-class outcome.** Every caller has a deterministic fallback: extraction stays queued, classification returns "unclear", consolidation uses rules, review holds the memory, forget uses key matches plus plain recall.
 - **Embeddings:** Ollama `nomic-embed-text` (768-d) with task prefixes, or a deterministic hashing embedder for tests and fully offline installs (`embed_provider="hash"` or `RUFUR_OFFLINE=1`). The embedder name is stored in the database; mixing embedders in one index is refused at startup.
@@ -362,7 +362,7 @@ The MCP endpoint (`/mcp`) runs in stateless JSON mode, so no session state has t
 
 - **Claude Code plugin** (`integrations/claude-code`): `hooks/rufur_hook.py` (stdlib only, fails open) handles `SessionStart` (bootstrap and inject the working set), `UserPromptSubmit` (capture the prompt, inject unseen relevant memories), `PostToolUse` for `WebFetch|WebSearch` (capture as low trust), `Stop` (capture the reply), `SubagentStop` (close idle pools), `SessionEnd`. Ships the `rufur-memory` skill and registers the MCP server.
 - **opencode** (`integrations/opencode`): MCP config plus `AGENTS.md` instructions and a plugin.
-- **Antigravity** (`integrations/antigravity`): `mcp_config.json` (stdio bridge `rufur mcp` as agent `antigravity`) to merge into `~/.gemini/config/mcp_config.json`, plus `GEMINI.md` rules for `~/.gemini/GEMINI.md`.
+- **Antigravity** (`integrations/antigravity`): `mcp_config.json` (stdio bridge `rufur mcp` as agent `antigravity`) to merge into `~/.gemini/config/mcp_config.json` (CLI and app) and `~/.gemini/antigravity/mcp_config.json` (IDE), the `skills/rufur-memory` skill for `~/.gemini/config/skills/` and `~/.gemini/antigravity/skills/`, plus `GEMINI.md` rules for `~/.gemini/GEMINI.md`.
 - **pi** (`integrations/pi`): no MCP, so a skill with `scripts/rufur.py` plus an extension that recalls and captures automatically.
 
 ### The UI (`ui/`)

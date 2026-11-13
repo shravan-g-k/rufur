@@ -101,6 +101,33 @@ export interface Decision {
   default_at: number | null;
 }
 
+export interface SettledConflict {
+  conflict_id: string;
+  kind: string;
+  status: "auto_resolved" | "resolved" | "defaulted";
+  subject: string;
+  resolution: { action: string; winner?: string | null; by: string; reason?: string } | null;
+  created_at: number;
+  resolved_at: number | null;
+  options: { memory_id: string; text: string; source: string; status: string }[];
+}
+
+export interface LlmLogRow {
+  id: number;
+  role: string;
+  outcome: "fallback" | "failed";
+  model: string | null;
+  errors: string[];
+  created_at: number;
+}
+
+export interface LlmLog {
+  rows: LlmLogRow[];
+  last_24h: { fallback: number; failed: number };
+  chains: Record<string, string[]>;
+  keys: Record<string, { total: number; spent: number; next_back: number | null }>;
+}
+
 export interface GraphNode {
   id: string;
   kind: "memory" | "subject" | "entity";
@@ -238,9 +265,9 @@ export type TokenBucket = "session" | "hour";
 
 export interface Tokens {
   bucket: TokenBucket;
-  // In "session" buckets, t is when the burst of activity started; end, calls and agents describe it.
+  // In "session" buckets, t is when the agent session started (session_id, agent); end, calls and agents describe it.
   series: { t: number; recall: number; remember: number; extract: number; forget: number; llm: number; served: number;
-    end?: number; calls?: number; agents?: string[] }[];
+    end?: number; calls?: number; agents?: string[]; session_id?: string; agent?: string }[];
   cumulative: { t: number; full_history: number; rufur: number }[];
   by_agent: { agent: string; calls: number; tokens_in: number; tokens_out: number; llm_tokens: number }[];
   totals: { tokens_in: number; tokens_out: number; llm_tokens: number };
@@ -356,6 +383,8 @@ export const api = {
   stmStats: () => req<any>("GET", "/v1/stm/stats"),
   scratchPools: () => req<any[]>("GET", "/v1/scratch-pools"),
   decisions: () => req<Decision[]>("GET", "/v1/decisions"),
+  conflictHistory: () => req<SettledConflict[]>("GET", "/v1/conflicts/history?limit=30"),
+  llmLog: () => req<LlmLog>("GET", "/v1/llm/log?limit=200"),
   graph: () => req<GraphData>("GET", "/v1/graph?limit=300"),
   autoReview: () => req<unknown>("POST", "/v1/review/auto"),
   sessions: () => req<Sessions>("GET", "/v1/dashboard/sessions"),

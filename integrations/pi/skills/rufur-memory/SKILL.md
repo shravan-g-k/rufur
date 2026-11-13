@@ -27,6 +27,16 @@ Without the extension, do those steps yourself:
 - run `recall` at the start of each task
 - run `remember` once per finished task, with everything the user told you that is worth keeping (the extension does this for you when it is installed)
 
+## Save every prompt (required)
+With the `rufur` extension installed, every prompt is already recorded; you don't need to do anything. Without it, you are the only thing recording the conversation: on every turn, run `rufur.py remember "<the user's message, verbatim>" --source user` before you reply.
+Do it for every message, even short or trivial-looking ones: RUFUR decides what is worth keeping, not you. Never skip it because you're busy or the turn is simple. If a call fails, retry once; if it still fails, carry on with the task and say so once at the end.
+
+## Keep it seamless
+Memory is part of how you work, not a separate step the user watches.
+- Don't announce it. No "saved to RUFUR", "from memory", "according to RUFUR" or "let me check my memory" around tool calls; just use what you know and keep going.
+- Mention RUFUR only when it matters: the user asks what you remember or where something came from, you need them to settle a conflict, a stale or disputed memory changes your answer, or you're confirming a deletion.
+- At the end of a session one short line is fine (e.g. "Saved today's decisions to memory.").
+
 ## Reading
 - `rufur.py recall "what you're about to work on"`
   - Use the `context` field.

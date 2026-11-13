@@ -331,6 +331,14 @@ def create_app(service: MemoryService, *, mcp_app=None, mcp_session_manager=None
     def pending_decisions(a: str = A):
         return S.pending_decisions(a)
 
+    @app.get("/v1/conflicts/history")
+    def conflict_history(limit: int = 30, a: str = A):
+        return S.conflict_history(a, limit=limit)
+
+    @app.get("/v1/llm/log")
+    def llm_log(limit: int = 200, a: str = A):
+        return S.llm_log(limit=limit)
+
     @app.post("/v1/review/auto")
     def auto_review(a: str = A):
         return S.auto_review(a)

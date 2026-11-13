@@ -71,6 +71,8 @@ def main() -> None:
         out = post(f"/v1/sessions/{sid}/end", h=h)["extraction"]
         rows = out.get("results", [])
         print(f"    session {sid}: {time.perf_counter() - t:.0f}s, {len(rows)} claims, model {out.get('model')}")
+        if out.get("error"):
+            print(f"    LLM ERROR  {out['error']}")
         for r in rows:
             m = r["memory"] or {}
             print(f"      {r['outcome']:<11} {m.get('status', ''):<11} {m.get('text', '')[:110]}")

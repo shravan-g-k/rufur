@@ -147,7 +147,7 @@ export function OverviewPage({
         <Card className="xl:col-span-3">
           <CardHeader>
             <CardTitle>Token usage</CardTitle>
-            <CardDescription>Per operation, one bar per working session (a new one after 20 quiet minutes), last 7 days.</CardDescription>
+            <CardDescription>Per operation, one point per agent session, last 7 days.</CardDescription>
           </CardHeader>
           <CardContent>
             {tokens?.series.length ? (

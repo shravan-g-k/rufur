@@ -7,3 +7,4 @@ ui/dist/
 src/rufur/static/*
 !src/rufur/static/.gitkeep
 .rufur-dev/
+.env

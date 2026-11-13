@@ -8,6 +8,7 @@ are handy to flip per process (home dir, port, offline mode).
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,53 +30,55 @@ def _chain(*refs: tuple[str, str] | tuple[str, str, str, str]) -> list[ProviderR
 
 
 GROQ = ("https://api.groq.com/openai/v1", "GROQ_API_KEY")
+# Default first hop for every cloud-capable role; skipped when GROQ_API_KEY is unset, so Ollama takes over.
+GROQ_DEFAULT = ("openai_compat", "openai/gpt-oss-120b", *GROQ)
 
 
 def default_roles() -> dict[str, list[ProviderRef]]:
     return {
         "extract": _chain(
+            GROQ_DEFAULT,
             ("ollama", "qwen2.5:7b-instruct"),
             ("ollama", "gpt-oss:120b-cloud"),
-            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
         "classify": _chain(
+            GROQ_DEFAULT,
             ("ollama", "qwen2.5:7b-instruct"),
             ("ollama", "gpt-oss:120b-cloud"),
-            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
         "consolidate": _chain(
+            GROQ_DEFAULT,
             ("ollama", "qwen2.5:7b-instruct"),
             ("ollama", "gpt-oss:120b-cloud"),
-            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
         "resolve": _chain(
+            GROQ_DEFAULT,
             ("ollama", "qwen2.5:7b-instruct"),
             ("ollama", "gpt-oss:120b-cloud"),
-            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
         "review": _chain(
+            GROQ_DEFAULT,
             ("ollama", "qwen2.5:7b-instruct"),
             ("ollama", "gpt-oss:120b-cloud"),
-            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
         "verify": _chain(
+            GROQ_DEFAULT,
             ("ollama", "qwen2.5:7b-instruct"),
             ("ollama", "gpt-oss:120b-cloud"),
-            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
         "forget": _chain(
+            GROQ_DEFAULT,
             ("ollama", "qwen2.5:7b-instruct"),
             ("ollama", "gpt-oss:120b-cloud"),
-            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
         "probe": _chain(
             ("ollama", "qwen3.5:4b"),
             ("ollama", "qwen2.5:7b-instruct"),
         ),
         "answer": _chain(
+            GROQ_DEFAULT,
             ("ollama", "gemma4:12b"),
             ("ollama", "gpt-oss:120b-cloud"),
-            ("openai_compat", "llama-3.3-70b-versatile", *GROQ),
         ),
     }
 
@@ -152,6 +155,9 @@ class Config:
     size_trigger_events: int = 300
     consolidate_batch: int = 25
 
+    # Local Ollama models appended to every role's chain: the last resort when cloud hops are rate-limited or down
+    local_fallback: list[str] = field(default_factory=lambda: ["qwen2.5:7b-instruct"])
+
     # Working set and auto-recall
     working_set_budget: int = 600
     prompt_recall_budget: int = 300
@@ -202,8 +208,42 @@ def _apply(cfg: Config, data: dict[str, Any]) -> None:
             setattr(cfg, key, value)
 
 
+def _read_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    out = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.removeprefix("export ").partition("=")
+        out[key.strip()] = value.strip().strip("'\"")
+    return out
+
+
+def _load_env_file(path: Path) -> None:
+    """KEY=value lines (e.g. GROQ_API_KEY) so the daemon has its keys however it was started.
+    A variable already set in the environment wins."""
+    for key, value in _read_env_file(path).items():
+        os.environ.setdefault(key, value)
+
+
+def api_keys(name: str, home: Path | None = None) -> list[str]:
+    """Every key for `name`, in rotation order: NAME, then NAMES (comma/space separated), then NAME_1, NAME_2, ...
+    The .env files are read fresh each time, so keys pasted into ~/.rufur/.env work without a restart."""
+    env = dict(os.environ)
+    for path in {Path.home() / ".rufur" / ".env", *([home / ".env"] if home else [])}:
+        env |= _read_env_file(path)
+    numbered = sorted((k for k in env if re.fullmatch(rf"{name}_\d+", k)), key=lambda k: int(k.rsplit("_", 1)[1]))
+    keys = [env.get(name, ""), *re.split(r"[\s,]+", env.get(f"{name}S", "")), *(env[k] for k in numbered)]
+    return list(dict.fromkeys(k for k in keys if k))
+
+
 def load_config(home: str | Path | None = None, **overrides: Any) -> Config:
     home_path = Path(home or os.environ.get("RUFUR_HOME") or Path.home() / ".rufur").expanduser()
+    # Keys live in ~/.rufur/.env, so scripts with a throwaway RUFUR_HOME still find them.
+    _load_env_file(Path.home() / ".rufur" / ".env")
+    _load_env_file(home_path / ".env")
     cfg = Config(home=home_path)
     toml_path = home_path / "config.toml"
     if toml_path.exists():

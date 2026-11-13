@@ -67,6 +67,7 @@ def open_conflict(db: "Database", ledger: "Ledger", kind: str, newcomer: dict, o
         (cid, user_id, kind, dumps([newcomer["id"], *others]), newcomer["subject"], newcomer["predicate"], "open", now()),
     )
     ledger.op("conflict", cid, newcomer["author_agent"], {"kind": kind, "memories": [newcomer["id"], *others]})
+    ledger.bus.publish("conflict.opened", id=cid, conflict_kind=kind)
     return cid
 
 

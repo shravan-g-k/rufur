@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,25 +25,25 @@ const dayTime = (t: number) =>
 const compact = (n: number) => Intl.NumberFormat(undefined, { notation: "compact" }).format(n);
 const OPS = Object.keys(OPS_CONFIG) as (keyof typeof OPS_CONFIG)[];
 
-// One bar per working session: the gaps between sessions are skipped, so a busy afternoon isn't a sliver.
-function SessionBars({ data, height }: { data: Tokens; height: string }) {
+// One point per agent session, evenly spaced: the gaps between sessions are skipped, so a busy afternoon isn't a sliver.
+function SessionLines({ data, height }: { data: Tokens; height: string }) {
   const rows = data.series.map((s) => ({
     ...s,
-    tick: dayTime(s.t),
-    label: `${dayTime(s.t)}–${time(s.end ?? s.t)} · ${s.calls ?? 0} calls · ${(s.agents ?? []).join(", ")}`,
+    tick: `${s.agent ?? "activity"} ${time(s.t)}`,
+    label: `${s.agent ?? (s.agents ?? []).join(", ")} · ${dayTime(s.t)}–${time(s.end ?? s.t)} · ${s.calls ?? 0} calls`,
   }));
   return (
     <ChartContainer config={OPS_CONFIG} className={`aspect-auto ${height} w-full`}>
-      <BarChart data={rows} margin={{ left: 0, right: 12, top: 8 }}>
+      <LineChart data={rows} margin={{ left: 0, right: 12, top: 8 }}>
         <CartesianGrid vertical={false} />
         <XAxis dataKey="tick" tickLine={false} axisLine={false} minTickGap={24} tick={{ fontSize: 11 }} />
         <YAxis tickFormatter={compact} tickLine={false} axisLine={false} width={40} />
-        <ChartTooltip cursor={{ fill: "var(--muted)" }} content={<ChartTooltipContent labelFormatter={(_, p) => p?.[0]?.payload?.label} />} />
+        <ChartTooltip content={<ChartTooltipContent indicator="line" labelFormatter={(_, p) => p?.[0]?.payload?.label} />} />
         <ChartLegend content={<ChartLegendContent />} />
         {OPS.map((k) => (
-          <Bar key={k} dataKey={k} stackId="ops" fill={`var(--color-${k})`} maxBarSize={48} isAnimationActive={false} />
+          <Line key={k} dataKey={k} type="monotone" stroke={`var(--color-${k})`} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} isAnimationActive={false} />
         ))}
-      </BarChart>
+      </LineChart>
     </ChartContainer>
   );
 }
@@ -66,7 +66,7 @@ function HourlyLine({ data, height }: { data: Tokens; height: string }) {
 }
 
 export function TokenChart({ data, height = "h-72" }: { data: Tokens; height?: string }) {
-  return data.bucket === "hour" ? <HourlyLine data={data} height={height} /> : <SessionBars data={data} height={height} />;
+  return data.bucket === "hour" ? <HourlyLine data={data} height={height} /> : <SessionLines data={data} height={height} />;
 }
 
 export function TokensPage({ version }: { version: number }) {
@@ -109,7 +109,7 @@ export function TokensPage({ version }: { version: number }) {
           <CardDescription>
             Input, output and model tokens per operation,{" "}
             {bucket === "session"
-              ? "one bar per working session over the last 7 days (a new session starts after 20 quiet minutes, whichever agent is working)"
+              ? "one point per agent session over the last 7 days"
               : "every hour of the last 2 days"}
             .
           </CardDescription>

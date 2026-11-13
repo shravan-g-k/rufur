@@ -280,7 +280,7 @@ def timeline(svc: "MemoryService", agent: str, kind: str, ident: str) -> dict:
     return {"events": events, "series": series}
 
 
-ACTIVITY_GAP_S = 20 * 60  # a quiet spell this long starts a new activity session on the token timeline
+ACTIVITY_GAP_S = 20 * 60  # ops before any session are grouped into bursts split by a quiet spell this long
 
 
 def _empty_bucket() -> dict:
@@ -288,8 +288,9 @@ def _empty_bucket() -> dict:
 
 
 def tokens(svc: "MemoryService", bucket: str = "session", since: float | None = None) -> dict:
-    """Token use over time. `session` groups operations into bursts of activity (a new one after 20 quiet
-    minutes, whichever agent is working); `hour` is a continuous hourly line over the last two days."""
+    """Token use over time. `session` gives one point per agent session (each op goes to the latest session of
+    its agent that had started by then; ops with no agent go to the latest session of any agent); `hour` is a
+    continuous hourly line over the last two days."""
     since = since if since is not None else now() - (7 * 86400 if bucket == "session" else 2 * 86400)
     rows = svc.db.all(
         "SELECT op, agent, tokens_in, tokens_out, llm_tokens, created_at FROM metrics WHERE created_at >= ? ORDER BY created_at",
@@ -302,17 +303,30 @@ def tokens(svc: "MemoryService", bucket: str = "session", since: float | None = 
             buckets[h] = _empty_bucket()
             h += 3600
     by_agent: dict[str, dict] = defaultdict(lambda: {"calls": 0, "tokens_in": 0, "tokens_out": 0, "llm_tokens": 0})
-    start = last = None
+    sessions = svc.db.all("SELECT id, agent, started_at, ended_at FROM sessions WHERE started_at >= ? ORDER BY started_at",
+                          (since,)) if bucket == "session" else []  # fmt: skip
+    by_id: dict[str, dict] = {}
+    for sess in sessions:  # every session gets a point, even one that used no tokens
+        by_id[sess["id"]] = buckets[sess["started_at"]] = _empty_bucket() | {
+            "session_id": sess["id"], "agent": sess["agent"], "end": sess["ended_at"] or sess["started_at"],
+            "calls": 0, "agents": [sess["agent"]]}  # fmt: skip
+    burst = last = None
     for r in rows:
         if bucket == "session":
-            if last is None or r["created_at"] - last > ACTIVITY_GAP_S:
-                start = r["created_at"]
-                buckets[start] = _empty_bucket() | {"end": start, "calls": 0, "agents": []}
-            last = r["created_at"]
-            b = buckets[start]
-            b["end"] = last
+            t, name = r["created_at"], r["agent"] or "system"
+            owner = next((x for x in reversed(sessions) if x["started_at"] <= t and x["agent"] == r["agent"]), None) \
+                or next((x for x in reversed(sessions) if x["started_at"] <= t and r["agent"] is None), None)  # fmt: skip
+            if owner:
+                b = by_id[owner["id"]]
+            else:  # before any session in range: group into bursts of activity
+                if last is None or t - last > ACTIVITY_GAP_S:
+                    burst = t
+                    buckets[burst] = _empty_bucket() | {"end": t, "calls": 0, "agents": []}
+                last = t
+                b = buckets[burst]
+            b["end"] = max(b["end"], t)
             b["calls"] += 1
-            if (name := r["agent"] or "system") not in b["agents"]:
+            if name not in b["agents"]:
                 b["agents"].append(name)
         else:
             b = buckets.setdefault((r["created_at"] // 3600) * 3600, _empty_bucket())

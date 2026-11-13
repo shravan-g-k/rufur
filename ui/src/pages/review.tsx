@@ -4,15 +4,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { api, Decision, since, SOURCE_LABEL, until } from "@/api";
+import { api, Decision, SettledConflict, since, SOURCE_LABEL, until } from "@/api";
 
 export function ReviewPage({ version, onChanged, onSelectMemory }: { version: number; onChanged: () => void; onSelectMemory: (id: string) => void }) {
   const [items, setItems] = useState<Awaited<ReturnType<typeof api.quarantine>>>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [settled, setSettled] = useState<SettledConflict[]>([]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     api.quarantine().then(setItems);
     api.decisions().then(setDecisions);
+    api.conflictHistory().then(setSettled);
   }, [version]);
 
   async function decide(d: Decision, winner: string | null) {
@@ -35,7 +37,7 @@ export function ReviewPage({ version, onChanged, onSelectMemory }: { version: nu
     onChanged();
   }
 
-  if (!items.length && !decisions.length) {
+  if (!items.length && !decisions.length && !settled.length) {
     return (
       <Empty>
         <EmptyHeader>
@@ -143,6 +145,61 @@ export function ReviewPage({ version, onChanged, onSelectMemory }: { version: nu
           ))}
         </section>
       </div>
+
+      <section className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-base font-semibold">Settled conflicts</h2>
+          <p className="text-muted-foreground text-sm">Disagreements already decided, by RUFUR, an agent, you, or the default after a week. Newest first.</p>
+        </div>
+        {settled.length === 0 && <p className="text-muted-foreground text-sm">No conflicts settled yet.</p>}
+        {settled.map((c) => (
+          <SettledCard key={c.conflict_id} c={c} onSelectMemory={onSelectMemory} />
+        ))}
+      </section>
     </div>
+  );
+}
+
+const SETTLED_BY: Record<string, string> = {
+  memory_layer: "RUFUR",
+  user: "you",
+  agent: "an agent",
+  default: "the default",
+};
+
+function SettledCard({ c, onSelectMemory }: { c: SettledConflict; onSelectMemory: (id: string) => void }) {
+  const r = c.resolution;
+  const outcome =
+    r?.action === "both" ? "Both kept, each for its own situation" : r?.action === "neither" ? "Neither kept" : "Kept the highlighted one";
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          {c.subject ? `Disagreement about ${c.subject}` : "Disagreement"}
+          <Badge variant="outline">{c.kind}</Badge>
+        </CardTitle>
+        <CardDescription>
+          {outcome}, decided by {SETTLED_BY[r?.by ?? ""] ?? r?.by ?? "RUFUR"} {since(c.resolved_at ?? c.created_at)}
+          {r?.reason ? `: ${r.reason}` : "."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {c.options.map((o) => {
+          const won = r?.action === "both" || o.memory_id === r?.winner;
+          return (
+            <button
+              key={o.memory_id}
+              onClick={() => onSelectMemory(o.memory_id)}
+              className={`rounded-md border p-2 text-left text-sm hover:underline ${won ? "border-primary bg-primary/5 font-medium" : "text-muted-foreground line-through decoration-1"}`}
+            >
+              {o.text}
+              <span className="text-muted-foreground ml-2 text-xs no-underline">
+                {SOURCE_LABEL[o.source] ?? o.source} · {o.status}
+              </span>
+            </button>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }

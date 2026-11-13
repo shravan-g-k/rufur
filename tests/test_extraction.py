@@ -99,15 +99,51 @@ def test_unusable_answer_escalates_to_the_next_model(cfg):
     cfg.roles = {"extract": [ProviderRef("ollama", "small"), ProviderRef("ollama", "big")]}
 
     class Chain(LLM):
-        def _call(self, hop, system, user, schema, num_predict=2048):
+        def _call(self, hop, system, user, schema, num_predict=2048, key=None):
             return LLMResult(bad if hop.model == "small" else good, hop.model, 1, 1, 0.0)
 
     out, usage = Chain(cfg).complete("extract", "s", "u", FlatExtraction, accept=_well_formed(1))
     assert usage.model == "big" and out.claims[0][0] == 0
     # When every model answers badly, the first parsed answer comes back for the caller to reject.
     cfg.roles = {"extract": [ProviderRef("ollama", "small")]}
+    cfg.local_fallback = []
     out, usage = Chain(cfg).complete("extract", "s", "u", FlatExtraction, accept=_well_formed(1))
     assert usage.model == "small"
+
+
+def test_rate_limited_cloud_falls_back_to_local_and_is_logged(cfg):
+    import httpx
+    import pytest
+    from rufur.config import ProviderRef
+    from rufur.llm import LLM, LLMResult, LLMUnavailable
+    from rufur.write.extract import FlatExtraction
+
+    good = {"claims": [[0, "fact", "user", "x", "y"]]}
+    cfg.roles = {"extract": [ProviderRef("openai_compat", "cloud", "https://cloud.test/v1")]}
+    cfg.local_fallback = ["local"]
+    calls: list[str] = []
+
+    class Chain(LLM):
+        def _call(self, hop, system, user, schema, num_predict=2048, key=None):
+            calls.append(hop.model)
+            if hop.model == "cloud":
+                req = httpx.Request("POST", "https://cloud.test/v1/chat/completions")
+                raise httpx.HTTPStatusError("429", request=req, response=httpx.Response(429, request=req))
+            if self.local_down:
+                raise httpx.ConnectError("ollama down")
+            return LLMResult(good, hop.model, 1, 1, 0.0)
+
+    llm, logs = Chain(cfg), []
+    llm.local_down, llm.on_log = False, logs.append
+    _out, usage = llm.complete("extract", "s", "u", FlatExtraction)
+    assert usage.model == "local" and calls == ["cloud", "local"]  # no retrying the rate-limited hop
+    assert logs[-1]["outcome"] == "fallback" and "429" in logs[-1]["errors"][0]
+    # The cloud hop is skipped while it cools down; when local fails too, the failure is logged.
+    llm.local_down = True
+    with pytest.raises(LLMUnavailable):
+        llm.complete("extract", "s", "u", FlatExtraction)
+    assert calls[-1] == "local" and logs[-1]["outcome"] == "failed"
+    assert any("skipped" in e for e in logs[-1]["errors"])
 
 
 def test_rows_become_typed_claims_with_code_built_text(cfg):
@@ -137,3 +173,49 @@ def test_long_rows_from_a_small_model_keep_their_value():
     assert (secret.value, secret.sensitivity) == ("rzp_test_x", "restricted")
     record = _parse_row([0, "fact", "customer", "name", "Sunrise Clinic", "plan", "Pro"], 1)
     assert (record.type, record.predicate, record.value) == ("table", "customer", "name=Sunrise Clinic; plan=Pro")
+
+
+def test_keys_rotate_only_when_a_daily_limit_is_hit(cfg, monkeypatch):
+    import httpx
+    from rufur.config import ProviderRef, api_keys
+    from rufur.llm import LLM, LLMResult
+    from rufur.write.extract import FlatExtraction
+
+    for k in ("TESTKEY", "TESTKEYS", "TESTKEY_1", "TESTKEY_2"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("TESTKEYS", "k-one, k-two")
+    monkeypatch.setenv("TESTKEY_1", "k-three")
+    assert api_keys("TESTKEY") == ["k-one", "k-two", "k-three"]
+
+    good = {"claims": [[0, "fact", "user", "x", "y"]]}
+    cfg.roles = {"extract": [ProviderRef("openai_compat", "cloud", "https://cloud.test/v1", "TESTKEY")]}
+    cfg.local_fallback = ["local"]
+    used: list[str | None] = []
+
+    def limit(msg):
+        req = httpx.Request("POST", "https://cloud.test/v1/chat/completions")
+        resp = httpx.Response(429, request=req, json={"error": {"message": msg}})
+        return httpx.HTTPStatusError("429", request=req, response=resp)
+
+    class Chain(LLM):
+        def _call(self, hop, system, user, schema, num_predict=2048, key=None):
+            used.append(key)
+            if key == "k-one":
+                raise limit("Rate limit reached on tokens per day (TPD): Limit 200000. Please try again in 7m12s.")
+            if key == "k-two" and self.minute_limited:
+                raise limit("Rate limit reached on tokens per minute (TPM). Please try again in 2s.")
+            return LLMResult(good, f"{hop.model}:{key}", 1, 1, 0.0)
+
+    llm = Chain(cfg)
+    llm.minute_limited = False
+    _out, usage = llm.complete("extract", "s", "u", FlatExtraction)
+    assert usage.model == "cloud:k-two" and used == ["k-one", "k-two"]
+    # The spent key stays parked; the next call starts on the second key.
+    used.clear()
+    llm.complete("extract", "s", "u", FlatExtraction)
+    assert used == ["k-two"]
+    # A per-minute limit doesn't burn through keys: it falls back to local instead.
+    used.clear()
+    llm.minute_limited = True
+    _out, usage = llm.complete("extract", "s", "u", FlatExtraction)
+    assert used == ["k-two", None] and usage.model == "local:None"

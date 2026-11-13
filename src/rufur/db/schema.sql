@@ -228,6 +228,16 @@ CREATE TABLE IF NOT EXISTS metrics (
     created_at REAL NOT NULL
 );
 
+-- LLM calls that fell back to another model or failed outright (rate limits, outages, bad output).
+CREATE TABLE IF NOT EXISTS llm_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    role       TEXT NOT NULL,
+    outcome    TEXT NOT NULL,   -- fallback | failed
+    model      TEXT,            -- the model that finally answered (null when failed)
+    errors     TEXT NOT NULL,   -- JSON list, one entry per hop that didn't answer
+    created_at REAL NOT NULL
+);
+
 -- Signed, hash-chained deletion receipts. Hashes, ids and probe outcomes only, never the forgotten content.
 CREATE TABLE IF NOT EXISTS forget_receipts (
     seq        INTEGER PRIMARY KEY AUTOINCREMENT,

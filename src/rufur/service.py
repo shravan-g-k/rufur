@@ -17,7 +17,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from .config import Config
+from .config import Config, api_keys
 from .db.conn import Database, dumps
 from .embed import EmbedUnavailable, make_embedder
 from .events_bus import EventBus
@@ -76,6 +76,7 @@ class MemoryService:
         self.db = Database(cfg.db_path, cfg.embed_dim)
         self.ledger = Ledger(self.db, self.bus)
         self.llm = llm or LLM(cfg)
+        self.llm.on_log = self._log_llm
         self.writer = WritePath(cfg, self.db, self.ledger, self.llm, self.embedder)
         self.verifier = make_verifier(self.llm)
         self.fast_reranker = make_reranker(cfg, cfg.fast_reranker)
@@ -94,6 +95,30 @@ class MemoryService:
             self.db.set_meta("embedder", self.embedder.name)
         elif stored != self.embedder.name:
             raise RuntimeError(f"database vectors come from {stored!r} but the configured embedder is {self.embedder.name!r}")
+
+    def _log_llm(self, rec: dict) -> None:
+        self.db.execute("INSERT INTO llm_log(role, outcome, model, errors, created_at) VALUES(?,?,?,?,?)",
+                        (rec["role"], rec["outcome"], rec["model"], json.dumps(rec["errors"]), now()))  # fmt: skip
+        if rec["outcome"] == "failed":
+            log.warning("LLM %s failed: %s", rec["role"], "; ".join(rec["errors"]))
+        self.bus.publish("llm.log", role=rec["role"], outcome=rec["outcome"], model=rec["model"])
+
+    def llm_log(self, limit: int = 200) -> dict:
+        rows = self.db.all("SELECT * FROM llm_log ORDER BY id DESC LIMIT ?", (limit,))
+        for r in rows:
+            r["errors"] = json.loads(r["errors"])
+        day = now() - 86400
+        counts = {o: self.db.scalar("SELECT count(*) FROM llm_log WHERE outcome = ? AND created_at > ?", (o, day))
+                  for o in ("fallback", "failed")}  # fmt: skip
+        if not isinstance(self.llm, LLM):
+            return {"rows": rows, "last_24h": counts, "chains": {}, "keys": {}}
+        keys = {}
+        for env in {h.api_key_env for hops in self.cfg.roles.values() for h in hops if h.api_key_env}:
+            have = api_keys(env, self.cfg.home)
+            spent = [self.llm._key_spent_until[k] for k in have if self.llm._key_spent_until.get(k, 0) > now()]
+            keys[env] = {"total": len(have), "spent": len(spent), "next_back": min(spent) if spent else None}
+        return {"rows": rows, "last_24h": counts, "keys": keys,
+                "chains": {role: [h.model for h in self.llm.chain(role)] for role in self.cfg.roles}}  # fmt: skip
 
     def close(self) -> None:
         self.worker.shutdown(wait=True)
@@ -616,6 +641,22 @@ class MemoryService:
             except NotFound:
                 continue
             out.append(resolve_mod.decision(self, r["id"]))
+        return out
+
+    def conflict_history(self, agent: str, limit: int = 30) -> list[dict]:
+        """Conflicts already settled (by rules, RUFUR's model, an agent, the user or the default), newest first."""
+        a = self.agent(agent)
+        out = []
+        for r in self.db.all("SELECT id FROM conflicts WHERE user_id = ? AND status != 'open' "
+                             "ORDER BY coalesce(resolved_at, created_at) DESC LIMIT ?", (a["user_id"], limit)):  # fmt: skip
+            c, mems = resolve_mod._load(self, r["id"])
+            if not all(self._can_read_memory(agent, m) for m in mems):
+                continue
+            out.append({"conflict_id": c["id"], "kind": c["kind"], "status": c["status"],
+                        "subject": " ".join(filter(None, [c["subject"], c["predicate"]])),
+                        "resolution": c["resolution"], "created_at": c["created_at"], "resolved_at": c["resolved_at"],
+                        "options": [{"memory_id": m["id"], "text": m["text"], "source": m["source_type"],
+                                     "status": m["status"]} for m in mems]})  # fmt: skip
         return out
 
     def resolve_conflict(self, agent: str, conflict_id: str, *, action: str = "keep", winner: str | None = None,
