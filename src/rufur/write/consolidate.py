@@ -99,10 +99,20 @@ def _clamp_volatility(m: dict, store: str, proposed: str) -> str:
 
 
 def _protected(svc: "MemoryService", m: dict) -> bool:
-    """Items that must never be discarded: decisions, pinned, disputed, or anything that replaced a memory."""
+    """Items that must never be discarded: decisions, pinned, disputed, anything that replaced a memory, and a
+    complete fact the user stated (subject, attribute and value; not small talk, which is an event) that
+    long-term memory doesn't already hold."""
     if m["type"] == "decision" or m["pinned"] or m["status"] == "disputed":
         return True
-    return bool(svc.db.scalar("SELECT 1 FROM memories WHERE superseded_by = ? LIMIT 1", (m["id"],)))
+    if svc.db.scalar("SELECT 1 FROM memories WHERE superseded_by = ? LIMIT 1", (m["id"],)):
+        return True
+    if (m["source_type"] == "user" and m["type"] in ("fact", "preference", "relation", "procedure", "table")
+            and m["subject"] and m["predicate"] and m["value"]):  # fmt: skip
+        return not svc.db.scalar(
+            "SELECT 1 FROM memories WHERE tier = 'ltm' AND status = 'active' AND lower(subject) = lower(?) "
+            "AND lower(predicate) = lower(?) AND lower(value) = lower(?) LIMIT 1",
+            (m["subject"], m["predicate"], m["value"]))  # fmt: skip
+    return False
 
 
 def _known_tables(svc: "MemoryService") -> dict[str, list[str]]:
@@ -290,13 +300,15 @@ def write_journal(svc: "MemoryService", user_id: str, day: datetime, run_id: str
 
 
 def consolidate(svc: "MemoryService", user_id: str, trigger: str, *, memory_ids: list[str] | None = None,
-                journal_day: datetime | None = None) -> dict:  # fmt: skip
+                journal_day: datetime | None = None, retry_discarded: bool = False) -> dict:  # fmt: skip
+    """`retry_discarded` also reconsiders items an earlier run left short-term (store 'discard')."""
     started = time.perf_counter()
     run_id = new_id("run")
     svc.db.execute("INSERT INTO consolidation_runs(id, user_id, trigger, started_at) VALUES(?,?,?,?)",
                    (run_id, user_id, trigger, now()))  # fmt: skip
     stm = svc.stm_pool(user_id)["id"]
-    sql = ("SELECT * FROM memories WHERE pool_id = ? AND tier = 'stm' AND consolidation_run IS NULL "
+    unfiled = "(consolidation_run IS NULL OR store = 'discard')" if retry_discarded else "consolidation_run IS NULL"
+    sql = (f"SELECT * FROM memories WHERE pool_id = ? AND tier = 'stm' AND {unfiled} "
            "AND status IN ('active', 'disputed')")  # fmt: skip
     params: list = [stm]
     if memory_ids:

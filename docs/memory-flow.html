@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How RUFUR Remembers</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafafa; --card: #ffffff; --fg: #09090b; --muted: #71717a; --border: #e4e4e7;
+      --line: #a1a1aa; --ask: #fffbeb; --ask-border: #fcd34d; --side: #f4f4f5;
+      --ltm: #18181b; --ltm-fg: #fafafa; --chip: #27272a; --chip-fg: #e4e4e7; --chip-border: #3f3f46;
+      --ok: #f0fdf4; --ok-border: #86efac;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #09090b; --card: #18181b; --fg: #fafafa; --muted: #a1a1aa; --border: #27272a;
+        --line: #52525b; --ask: #1c1917; --ask-border: #a16207; --side: #18181b;
+        --ltm: #fafafa; --ltm-fg: #09090b; --chip: #f4f4f5; --chip-fg: #27272a; --chip-border: #d4d4d8;
+        --ok: #052e16; --ok-border: #166534;
+      }
+    }
+    :root[data-theme="dark"] {
+      --bg: #09090b; --card: #18181b; --fg: #fafafa; --muted: #a1a1aa; --border: #27272a;
+      --line: #52525b; --ask: #1c1917; --ask-border: #a16207; --side: #18181b;
+      --ltm: #fafafa; --ltm-fg: #09090b; --chip: #f4f4f5; --chip-fg: #27272a; --chip-border: #d4d4d8;
+      --ok: #052e16; --ok-border: #166534;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font-family: Geist, ui-sans-serif, system-ui, sans-serif; }
+    main { max-width: 820px; margin: 0 auto; padding: 40px 16px 56px; }
+    h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 6px; }
+    p.lead { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+    .frame { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px 12px; }
+    svg { display: block; width: 100%; height: auto; }
+    .card { fill: var(--card); stroke: var(--border); stroke-width: 1; }
+    .ask { fill: var(--ask); stroke: var(--ask-border); stroke-width: 1; }
+    .side { fill: var(--side); stroke: var(--border); stroke-width: 1; stroke-dasharray: 4 3; }
+    .ok { fill: var(--ok); stroke: var(--ok-border); stroke-width: 1; }
+    .ltm { fill: var(--ltm); }
+    .chip { fill: var(--chip); stroke: var(--chip-border); stroke-width: 1; }
+    .title { fill: var(--fg); font-size: 14px; font-weight: 600; }
+    .sub { fill: var(--muted); font-size: 12px; }
+    .ltm-title { fill: var(--ltm-fg); font-size: 15px; font-weight: 600; }
+    .ltm-sub { fill: var(--ltm-fg); opacity: 0.7; font-size: 12px; }
+    .chip-text { fill: var(--chip-fg); font-size: 12px; font-weight: 500; }
+    .flow { stroke: var(--line); stroke-width: 1.5; fill: none; }
+    .label { fill: var(--muted); font-size: 11px; font-weight: 500; }
+    #arrow path { fill: var(--line); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>How RUFUR remembers</h1>
+  <p class="lead">From a conversation with any AI tool to memory every tool can use.</p>
+  <div class="frame">
+    <svg viewBox="0 0 760 1000" role="img" aria-label="Flowchart: how a conversation becomes long-term memory">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 Z"/>
+        </marker>
+      </defs>
+
+      <!-- Your AI tools -->
+      <rect class="card" x="110" y="20" width="160" height="40" rx="20"/>
+      <text class="title" x="190" y="45" text-anchor="middle">Claude Code</text>
+      <rect class="card" x="300" y="20" width="160" height="40" rx="20"/>
+      <text class="title" x="380" y="45" text-anchor="middle">Antigravity</text>
+      <rect class="card" x="490" y="20" width="160" height="40" rx="20"/>
+      <text class="title" x="570" y="45" text-anchor="middle">pi</text>
+      <path class="flow" d="M190,60 C190,85 380,80 380,108" marker-end="url(#arrow)"/>
+      <path class="flow" d="M380,60 L380,108"/>
+      <path class="flow" d="M570,60 C570,85 380,80 380,108"/>
+
+      <!-- RUFUR listens -->
+      <rect class="card" x="230" y="110" width="300" height="60" rx="10"/>
+      <text class="title" x="380" y="136" text-anchor="middle">RUFUR listens</text>
+      <text class="sub" x="380" y="155" text-anchor="middle">Every message you send is noted</text>
+      <path class="flow" d="M380,170 L380,206" marker-end="url(#arrow)"/>
+
+      <!-- Picks out what matters -->
+      <rect class="card" x="230" y="208" width="300" height="60" rx="10"/>
+      <text class="title" x="380" y="234" text-anchor="middle">Picks out what matters</text>
+      <text class="sub" x="380" y="253" text-anchor="middle">Facts, preferences and decisions</text>
+      <path class="flow" d="M380,268 L380,302" marker-end="url(#arrow)"/>
+
+      <!-- Can it be trusted? -->
+      <path class="ask" d="M380,304 L500,350 L380,396 L260,350 Z"/>
+      <text class="title" x="380" y="355" text-anchor="middle">Can it be trusted?</text>
+      <path class="flow" d="M500,350 L566,350" marker-end="url(#arrow)"/>
+      <text class="label" x="532" y="342" text-anchor="middle">No</text>
+      <rect class="side" x="568" y="322" width="170" height="56" rx="10"/>
+      <text class="title" x="653" y="345" text-anchor="middle">Held for you</text>
+      <text class="sub" x="653" y="363" text-anchor="middle">You approve or reject it</text>
+      <path class="flow" d="M380,396 L380,430" marker-end="url(#arrow)"/>
+      <text class="label" x="392" y="418">Yes</text>
+
+      <!-- Clashes with something known? -->
+      <path class="ask" d="M380,432 L520,478 L380,524 L240,478 Z"/>
+      <text class="title" x="380" y="475" text-anchor="middle">Does it clash with</text>
+      <text class="title" x="380" y="493" text-anchor="middle">something it knows?</text>
+      <path class="flow" d="M520,478 L566,478" marker-end="url(#arrow)"/>
+      <text class="label" x="543" y="470" text-anchor="middle">Yes</text>
+      <rect class="side" x="568" y="450" width="170" height="56" rx="10"/>
+      <text class="title" x="653" y="473" text-anchor="middle">Sorts it out</text>
+      <text class="sub" x="653" y="491" text-anchor="middle">Keeps the right one, or asks</text>
+      <path class="flow" d="M653,506 C653,560 600,580 532,580" marker-end="url(#arrow)"/>
+      <path class="flow" d="M380,524 L380,550" marker-end="url(#arrow)"/>
+      <text class="label" x="392" y="541">No</text>
+
+      <!-- Short-term memory -->
+      <rect class="card" x="230" y="552" width="300" height="64" rx="10"/>
+      <text class="title" x="380" y="579" text-anchor="middle">Short-term memory</text>
+      <text class="sub" x="380" y="598" text-anchor="middle">Kept for a few days, shared by all your tools</text>
+      <path class="flow" d="M380,616 L380,648" marker-end="url(#arrow)"/>
+
+      <!-- Worth keeping? -->
+      <path class="ask" d="M380,650 L510,698 L380,746 L250,698 Z"/>
+      <text class="title" x="380" y="694" text-anchor="middle">Worth keeping</text>
+      <text class="title" x="380" y="712" text-anchor="middle">for good?</text>
+      <text class="sub" x="380" y="766" text-anchor="middle">Checked after each session and every night</text>
+      <path class="flow" d="M510,698 L566,698" marker-end="url(#arrow)"/>
+      <text class="label" x="538" y="690" text-anchor="middle">No</text>
+      <rect class="side" x="568" y="670" width="170" height="56" rx="10"/>
+      <text class="title" x="653" y="693" text-anchor="middle">Fades away</text>
+      <text class="sub" x="653" y="711" text-anchor="middle">Forgotten if never used</text>
+      <path class="flow" d="M380,774 L380,800" marker-end="url(#arrow)"/>
+      <text class="label" x="392" y="792">Yes</text>
+
+      <!-- Long-term memory -->
+      <rect class="ltm" x="90" y="802" width="580" height="104" rx="12"/>
+      <text class="ltm-title" x="380" y="830" text-anchor="middle">Long-term memory</text>
+      <text class="ltm-sub" x="380" y="848" text-anchor="middle">Filed where it fits best</text>
+      <g>
+        <rect class="chip" x="112" y="864" width="86" height="26" rx="13"/><text class="chip-text" x="155" y="881" text-anchor="middle">About you</text>
+        <rect class="chip" x="206" y="864" width="66" height="26" rx="13"/><text class="chip-text" x="239" y="881" text-anchor="middle">Facts</text>
+        <rect class="chip" x="280" y="864" width="66" height="26" rx="13"/><text class="chip-text" x="313" y="881" text-anchor="middle">Tables</text>
+        <rect class="chip" x="354" y="864" width="104" height="26" rx="13"/><text class="chip-text" x="406" y="881" text-anchor="middle">Connections</text>
+        <rect class="chip" x="466" y="864" width="80" height="26" rx="13"/><text class="chip-text" x="506" y="881" text-anchor="middle">How-tos</text>
+        <rect class="chip" x="554" y="864" width="94" height="26" rx="13"/><text class="chip-text" x="601" y="881" text-anchor="middle">Daily diary</text>
+      </g>
+      <path class="flow" d="M380,906 L380,932" marker-end="url(#arrow)"/>
+
+      <!-- Back to your tools -->
+      <rect class="ok" x="200" y="934" width="360" height="56" rx="28"/>
+      <text class="title" x="380" y="958" text-anchor="middle">Any tool can recall it when needed</text>
+      <text class="sub" x="380" y="976" text-anchor="middle">Each tool sees only what it’s allowed to</text>
+    </svg>
+  </div>
+</main>
+</body>
+</html>

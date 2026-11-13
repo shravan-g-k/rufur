@@ -89,6 +89,7 @@ class BootstrapIn(BaseModel):
 
 class ConsolidateIn(BaseModel):
     journal: bool = False
+    retry_discarded: bool = False
 
 
 class SpawnIn(BaseModel):
@@ -208,6 +209,14 @@ def create_app(service: MemoryService, *, mcp_app=None, mcp_session_manager=None
     def list_agents(_a: str = A):
         return S.list_agents()
 
+    @app.get("/v1/access")
+    def access_overview(a: str = A):
+        return S.access_overview(a)
+
+    @app.post("/v1/agents/{name}/role")
+    def set_agent_role(name: str, body: dict, a: str = A):
+        return S.set_agent_role(a, name, str(body.get("role", "")))
+
     @app.post("/v1/agents/{name}/quarantine")
     def quarantine_agent(name: str, a: str = A):
         return S.quarantine_agent(a, name)
@@ -257,6 +266,10 @@ def create_app(service: MemoryService, *, mcp_app=None, mcp_session_manager=None
     def inspect(memory_id: str, a: str = A):
         return S.inspect(a, memory_id)
 
+    @app.get("/v1/memories/{memory_id}/access")
+    def memory_access(memory_id: str, a: str = A):
+        return S.memory_access(a, memory_id)
+
     @app.post("/v1/memories/{memory_id}/confirm")
     def confirm(memory_id: str, body: ConfirmIn, a: str = A):
         return S.confirm_memory(a, memory_id, body.action)
@@ -278,7 +291,8 @@ def create_app(service: MemoryService, *, mcp_app=None, mcp_session_manager=None
     # -- consolidation, STM, subagent pools ----------------------------------------
     @app.post("/v1/consolidate")
     def consolidate(body: ConsolidateIn | None = None, a: str = A):
-        return S.consolidate(a, journal=(body or ConsolidateIn()).journal)
+        body = body or ConsolidateIn()
+        return S.consolidate(a, journal=body.journal, retry_discarded=body.retry_discarded)
 
     @app.get("/v1/consolidation/runs")
     def consolidation_runs(limit: int = 30, _a: str = A):

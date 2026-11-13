@@ -165,6 +165,55 @@ class MemoryService:
         self.ledger.audit(actor, "agent.quarantine", name, {"memories": len(rows)})
         return {"agent": name, "quarantined_memories": len(rows)}
 
+    # ------------------------------------------------------- roles (RBAC)
+
+    ROLE_INFO = {
+        "public": "Only public memories.",
+        "internal": "Public and internal memories: everyday facts and preferences.",
+        "confidential": "Adds confidential memories, like personal contacts. The default role.",
+        "restricted": "Everything, including restricted memories such as keys and credentials.",
+    }
+
+    def access_overview(self, actor: str) -> dict:
+        """Roles are the sensitivity levels: an agent reads memories at or below its role. Pools add read/write lists."""
+        counts = {r["sensitivity"]: r["n"] for r in self.db.all(
+            "SELECT sensitivity, count(*) AS n FROM memories WHERE status IN ('active','disputed') GROUP BY sensitivity")}
+        agents = [a for a in self.list_agents() if not a["user_id"].startswith("scratch:")]
+        pools = self.db.all("SELECT name, kind, acl FROM pools WHERE kind != 'scratch' ORDER BY created_at")
+        return {
+            "roles": [{"role": r, "description": self.ROLE_INFO[r], "memories": counts.get(r, 0)} for r in SENSITIVITY_ORDER],
+            "agents": [{"name": a["name"], "role": a["clearance"], "quarantined": bool(a["quarantined"]),
+                        "editable": a["name"] != actor} for a in agents],  # fmt: skip
+            "pools": [{"name": p["name"], "kind": p["kind"], **json.loads(p["acl"])} for p in pools],
+        }
+
+    def set_agent_role(self, actor: str, name: str, role: str) -> dict:
+        if role not in SENSITIVITY_ORDER:
+            raise ValueError(f"unknown role {role!r}; one of {', '.join(SENSITIVITY_ORDER)}")
+        a = self.db.one("SELECT name, user_id FROM agents WHERE name = ?", (name,))
+        if a is None or a["user_id"].startswith("scratch:"):
+            raise NotFound(f"agent {name!r} not found")
+        if name == actor:
+            raise AccessDenied("an agent can't change its own role")
+        self.db.execute("UPDATE agents SET clearance = ? WHERE name = ?", (role, name))
+        self.ledger.audit(actor, "agent.role", name, {"role": role})
+        self.bus.publish("agent.updated", name=name, role=role)
+        return {"name": name, "role": role}
+
+    def memory_access(self, actor: str, memory_id: str) -> dict:
+        """Which agents may read this memory under their current role and the pool's access list."""
+        m = self.ledger.get_memory(memory_id)
+        if m is None or not self._can_read_memory(actor, m):
+            raise NotFound(f"memory {memory_id!r} not found")
+        with self.db.lock:  # the checks go through agent(), which stamps last_seen; put those back untouched
+            seen = self.db.all("SELECT name, last_seen FROM agents")
+            names = [r["name"] for r in self.db.all("SELECT name FROM agents WHERE user_id NOT LIKE 'scratch:%' "
+                                                    "AND quarantined = 0 ORDER BY created_at")]  # fmt: skip
+            readers = [n for n in names if self._can_read_memory(n, m)]
+            self.db.executemany("UPDATE agents SET last_seen = ? WHERE name = ?", [(r["last_seen"], r["name"]) for r in seen])
+        return {"memory_id": memory_id, "sensitivity": m["sensitivity"], "readers": readers,
+                "denied": [n for n in names if n not in readers]}  # fmt: skip
+
     # ----------------------------------------------------------------- pools
 
     def ensure_pool(self, name: str, *, owner: str | None, kind: str = "long", description: str | None = None,
@@ -992,13 +1041,13 @@ class MemoryService:
 
     # ------------------------------------------- consolidation, pools, STM
 
-    def consolidate(self, agent: str, *, trigger: str = "agent", journal: bool = False) -> dict:
+    def consolidate(self, agent: str, *, trigger: str = "agent", journal: bool = False, retry_discarded: bool = False) -> dict:
         """File the user's short-term memories into long-term stores now."""
         a = self.agent(agent)
         if a["user_id"].startswith("scratch:"):
             raise AccessDenied("subagents can't consolidate; close the pool instead")
         day = datetime.fromtimestamp(now()) if journal else None
-        return consolidate_mod.consolidate(self, a["user_id"], trigger, journal_day=day)
+        return consolidate_mod.consolidate(self, a["user_id"], trigger, journal_day=day, retry_discarded=retry_discarded)
 
     def _maybe_size_trigger(self, user_id: str) -> None:
         if user_id.startswith("scratch:"):

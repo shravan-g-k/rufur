@@ -489,3 +489,20 @@ def test_fast_recall_reranker_reorders(cfg):
         assert "car" in res["items"][0]["text"]
     finally:
         svc.close()
+
+
+def test_user_facts_are_not_discarded_and_manual_runs_retry_old_discards(cfg):
+    svc = make(cfg, lambda items: [{"id": i, "store": "discard", "importance": 0.4} for i, _ in items])
+    try:
+        name = fact(svc, "The project's name is Ledgerly", "project", "name", "Ledgerly")["memory"]["id"]
+        chat = svc.remember("ui", "lol that meeting was long", type="event", subject="chat", predicate="smalltalk",
+                            value="meeting", source="user")["results"][0]["memory"]["id"]  # fmt: skip
+        svc.consolidate("ui")
+        assert svc.ledger.get_memory(name)["tier"] == "ltm"  # a stated fact survives a wrong "discard"
+        assert svc.ledger.get_memory(chat)["store"] == "discard"  # small talk is still dropped
+        # An item an older run discarded is skipped by automatic runs but retried from the dashboard.
+        svc.db.execute("UPDATE memories SET store = 'discard', consolidation_run = 'run_old' WHERE id = ?", (chat,))
+        assert svc.consolidate("ui")["items"] == 0
+        assert svc.consolidate("ui", retry_discarded=True)["items"] == 1
+    finally:
+        svc.close()

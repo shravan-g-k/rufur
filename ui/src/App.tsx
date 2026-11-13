@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIcon, BrainIcon, CoinsIcon, DatabaseIcon, InboxIcon, NetworkIcon, LayoutDashboardIcon, MoonIcon, ShieldCheckIcon, SunIcon, TriangleAlertIcon, WorkflowIcon, LayersIcon, type LucideIcon } from "lucide-react";
+import { ActivityIcon, BrainIcon, KeyRoundIcon, CoinsIcon, DatabaseIcon, InboxIcon, NetworkIcon, LayoutDashboardIcon, MoonIcon, ShieldCheckIcon, SunIcon, TriangleAlertIcon, WorkflowIcon, LayersIcon, type LucideIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,12 +28,13 @@ import { GraphPage } from "@/pages/graph";
 import { OverviewPage } from "@/pages/overview";
 import { ReviewPage } from "@/pages/review";
 import { Selection, SessionsPage } from "@/pages/sessions";
+import { AccessPage } from "@/pages/access";
 import { LlmLogPage } from "@/pages/llm-log";
 import { RawPage } from "@/pages/raw";
 import { TokensPage } from "@/pages/tokens";
 import { api, Sessions } from "@/api";
 
-type Page = "overview" | "sessions" | "graph" | "tokens" | "forgetting" | "review" | "agents" | "llm" | "raw";
+type Page = "overview" | "sessions" | "graph" | "tokens" | "forgetting" | "review" | "agents" | "access" | "llm" | "raw";
 
 const PAGES: { id: Page; label: string; icon: LucideIcon; description: string }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboardIcon, description: "Memory across all sessions at a glance." },
@@ -43,6 +44,7 @@ const PAGES: { id: Page; label: string; icon: LucideIcon; description: string }[
   { id: "forgetting", label: "Forgetting", icon: ShieldCheckIcon, description: "What was deleted, and the proof that it’s gone." },
   { id: "review", label: "Review", icon: InboxIcon, description: "Held memories and conflicts waiting on a decision." },
   { id: "agents", label: "Handovers", icon: WorkflowIcon, description: "Tasks agents passed to each other." },
+  { id: "access", label: "Access", icon: KeyRoundIcon, description: "Role-based access: which agents may read which memories." },
   { id: "llm", label: "Model log", icon: ActivityIcon, description: "Model fallbacks and failures: rate limits, outages and bad output." },
   { id: "raw", label: "Raw data", icon: DatabaseIcon, description: "Every table, vector and graph row exactly as stored, read-only." },
 ];
@@ -189,6 +191,7 @@ export default function App() {
             {page === "forgetting" && <ForgettingPage version={version} />}
             {page === "review" && <ReviewPage version={version} onChanged={refresh} onSelectMemory={setMemory} />}
             {page === "agents" && <AgentsPage version={version} onSelectMemory={setMemory} />}
+            {page === "access" && <AccessPage version={version} onChanged={refresh} />}
             {page === "llm" && <LlmLogPage version={version} />}
             {page === "raw" && <RawPage />}
           </main>

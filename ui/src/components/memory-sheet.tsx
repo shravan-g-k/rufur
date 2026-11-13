@@ -8,7 +8,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge, TierBadge, TtlBar } from "@/components/memory-ui";
 import { PROBE_LABEL } from "@/pages/forgetting";
-import { api, ForgetResult, Memory, since, SOURCE_LABEL, STORE_LABEL, Ttl } from "@/api";
+import { api, ForgetResult, Memory, MemoryAccess, since, SOURCE_LABEL, STORE_LABEL, Ttl } from "@/api";
 
 interface Props {
   id: string | null;
@@ -24,13 +24,16 @@ export function MemorySheet({ id, ttl, onClose, onChanged, onSelect }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [forgetting, setForgetting] = useState(false);
   const [result, setResult] = useState<ForgetResult | null>(null);
+  const [access, setAccess] = useState<MemoryAccess | null>(null);
 
   useEffect(() => {
     setM(null);
     setError(null);
     setResult(null);
     setConfirming(false);
+    setAccess(null);
     if (id) api.memory(id).then(setM, (e) => setError(String(e.message)));
+    if (id) api.memoryAccess(id).then(setAccess, () => setAccess(null));
   }, [id]);
 
   async function decide(action: "confirm" | "reject") {
@@ -103,6 +106,13 @@ export function MemorySheet({ id, ttl, onClose, onChanged, onSelect }: Props) {
                 <Fact label="Pool" value={m.pool} />
                 <Fact label="Learned" value={since(m.created_at)} />
               </dl>
+
+              {access && (
+                <p className="text-muted-foreground -mt-3 text-xs">
+                  <span className="text-foreground font-medium">Access:</span> readable by {access.readers.join(", ") || "no agent"}
+                  {access.denied.length > 0 && `; hidden from ${access.denied.join(", ")} (role or pool access)`}.
+                </p>
+              )}
 
               {(m.status === "quarantined" || m.status === "disputed") && (
                 <Alert>

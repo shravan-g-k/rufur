@@ -224,3 +224,25 @@ def test_borderline_recall_is_settled_by_verifier(cfg):
         assert [it["id"] for it in out["items"]] == [mid]
     finally:
         svc.close()
+
+
+def test_roles_decide_who_reads_a_memory(service):
+    import pytest
+    from rufur.service import AccessDenied
+
+    out = service.remember("ui", "Dr. Meera's number is 98450-11111", subject="dr. meera", predicate="phone",
+                           value="98450-11111", source="user", sensitivity="confidential")
+    mid = out["results"][0]["memory"]["id"]
+    service.agent("pi")
+    seen = service.db.scalar("SELECT last_seen FROM agents WHERE name = 'pi'")
+
+    assert "pi" in service.memory_access("ui", mid)["readers"]  # the default role, confidential, reads it
+    assert service.db.scalar("SELECT last_seen FROM agents WHERE name = 'pi'") == seen  # checking doesn't mark pi live
+    service.set_agent_role("ui", "pi", "internal")
+    assert "pi" in service.memory_access("ui", mid)["denied"]
+    assert not any(m["id"] == mid for m in service.recall("pi", "Dr. Meera phone number")["items"])
+    assert {a["name"]: a["role"] for a in service.access_overview("ui")["agents"]}["pi"] == "internal"
+    with pytest.raises(AccessDenied):
+        service.set_agent_role("pi", "pi", "restricted")
+    with pytest.raises(ValueError):
+        service.set_agent_role("ui", "pi", "admin")

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How RUFUR Recalls</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafafa; --card: #ffffff; --fg: #09090b; --muted: #71717a; --border: #e4e4e7;
+      --line: #a1a1aa; --ask: #fffbeb; --ask-border: #fcd34d; --side: #f4f4f5;
+      --dark: #18181b; --dark-fg: #fafafa; --ok: #f0fdf4; --ok-border: #86efac; --rule: #e4e4e7;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #09090b; --card: #18181b; --fg: #fafafa; --muted: #a1a1aa; --border: #27272a;
+        --line: #52525b; --ask: #1c1917; --ask-border: #a16207; --side: #18181b;
+        --dark: #fafafa; --dark-fg: #09090b; --ok: #052e16; --ok-border: #166534; --rule: #27272a;
+      }
+    }
+    :root[data-theme="dark"] {
+      --bg: #09090b; --card: #18181b; --fg: #fafafa; --muted: #a1a1aa; --border: #27272a;
+      --line: #52525b; --ask: #1c1917; --ask-border: #a16207; --side: #18181b;
+      --dark: #fafafa; --dark-fg: #09090b; --ok: #052e16; --ok-border: #166534; --rule: #27272a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font-family: Geist, ui-sans-serif, system-ui, sans-serif; }
+    main { max-width: 820px; margin: 0 auto; padding: 40px 16px 56px; }
+    h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 6px; }
+    p.lead { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+    .frame { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px 12px; }
+    svg { display: block; width: 100%; height: auto; }
+    .card { fill: var(--card); stroke: var(--border); stroke-width: 1; }
+    .ask { fill: var(--ask); stroke: var(--ask-border); stroke-width: 1; }
+    .side { fill: var(--side); stroke: var(--border); stroke-width: 1; stroke-dasharray: 4 3; }
+    .ok { fill: var(--ok); stroke: var(--ok-border); stroke-width: 1; }
+    .store { fill: var(--dark); }
+    .title { fill: var(--fg); font-size: 14px; font-weight: 600; }
+    .sub { fill: var(--muted); font-size: 12px; }
+    .store-title { fill: var(--dark-fg); font-size: 14px; font-weight: 600; }
+    .store-sub { fill: var(--dark-fg); opacity: 0.7; font-size: 12px; }
+    .section { fill: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.06em; }
+    .flow { stroke: var(--line); stroke-width: 1.5; fill: none; }
+    .rule { stroke: var(--rule); stroke-width: 1; }
+    .label { fill: var(--muted); font-size: 11px; font-weight: 500; }
+    #arrow path { fill: var(--line); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>How RUFUR recalls</h1>
+  <p class="lead">How a tool gets back what it needs, and only what it’s allowed to see.</p>
+  <div class="frame">
+    <svg viewBox="0 0 760 1010" role="img" aria-label="Flowchart: how an AI tool recalls memories, and how subagents get their own pool">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 Z"/>
+        </marker>
+      </defs>
+
+      <!-- Three ways in -->
+      <rect class="card" x="100" y="20" width="180" height="40" rx="20"/>
+      <text class="title" x="190" y="45" text-anchor="middle">A session starts</text>
+      <rect class="card" x="290" y="20" width="180" height="40" rx="20"/>
+      <text class="title" x="380" y="45" text-anchor="middle">You send a message</text>
+      <rect class="card" x="480" y="20" width="180" height="40" rx="20"/>
+      <text class="title" x="570" y="45" text-anchor="middle">The tool asks</text>
+      <path class="flow" d="M190,60 C190,85 380,80 380,108" marker-end="url(#arrow)"/>
+      <path class="flow" d="M380,60 L380,108"/>
+      <path class="flow" d="M570,60 C570,85 380,80 380,108"/>
+
+      <!-- Access check -->
+      <rect class="card" x="230" y="110" width="300" height="60" rx="10"/>
+      <text class="title" x="380" y="136" text-anchor="middle">Access check</text>
+      <text class="sub" x="380" y="155" text-anchor="middle">Only what this tool is allowed to see</text>
+      <path class="flow" d="M330,170 C330,190 250,190 250,206" marker-end="url(#arrow)"/>
+      <path class="flow" d="M430,170 C430,190 510,190 510,206" marker-end="url(#arrow)"/>
+
+      <!-- Both memories -->
+      <rect class="store" x="150" y="208" width="200" height="60" rx="10"/>
+      <text class="store-title" x="250" y="234" text-anchor="middle">Short-term memory</text>
+      <text class="store-sub" x="250" y="253" text-anchor="middle">The last few days</text>
+      <rect class="store" x="410" y="208" width="200" height="60" rx="10"/>
+      <text class="store-title" x="510" y="234" text-anchor="middle">Long-term memory</text>
+      <text class="store-sub" x="510" y="253" text-anchor="middle">Everything filed for good</text>
+      <path class="flow" d="M250,268 C250,290 380,285 380,306" marker-end="url(#arrow)"/>
+      <path class="flow" d="M510,268 C510,290 380,285 380,306"/>
+
+      <!-- Looking back (side) -->
+      <rect class="side" x="16" y="308" width="170" height="60" rx="10"/>
+      <text class="title" x="101" y="332" text-anchor="middle">Asking about the past?</text>
+      <text class="sub" x="101" y="350" text-anchor="middle">Old versions and the diary</text>
+      <path class="flow" d="M186,338 L228,338" marker-end="url(#arrow)"/>
+
+      <!-- Find matches -->
+      <rect class="card" x="230" y="308" width="300" height="60" rx="10"/>
+      <text class="title" x="380" y="334" text-anchor="middle">Find matches</text>
+      <text class="sub" x="380" y="353" text-anchor="middle">By the exact words and by meaning</text>
+      <path class="flow" d="M380,368 L380,404" marker-end="url(#arrow)"/>
+
+      <!-- Rank -->
+      <rect class="card" x="230" y="406" width="300" height="60" rx="10"/>
+      <text class="title" x="380" y="432" text-anchor="middle">Put the best first</text>
+      <text class="sub" x="380" y="451" text-anchor="middle">Relevant, recent, trusted and important</text>
+      <path class="flow" d="M380,466 L380,500" marker-end="url(#arrow)"/>
+
+      <!-- Good enough? -->
+      <path class="ask" d="M380,502 L510,550 L380,598 L250,550 Z"/>
+      <text class="title" x="380" y="546" text-anchor="middle">Is it a good</text>
+      <text class="title" x="380" y="564" text-anchor="middle">enough match?</text>
+      <path class="flow" d="M510,550 L566,550" marker-end="url(#arrow)"/>
+      <text class="label" x="538" y="542" text-anchor="middle">No</text>
+      <rect class="side" x="568" y="522" width="176" height="56" rx="10"/>
+      <text class="title" x="656" y="545" text-anchor="middle">Says “I don’t know”</text>
+      <text class="sub" x="656" y="563" text-anchor="middle">Instead of guessing</text>
+      <path class="flow" d="M250,550 L186,550" marker-end="url(#arrow)"/>
+      <text class="label" x="218" y="542" text-anchor="middle">Not sure</text>
+      <rect class="side" x="16" y="522" width="170" height="56" rx="10"/>
+      <text class="title" x="101" y="545" text-anchor="middle">Double-checks</text>
+      <text class="sub" x="101" y="563" text-anchor="middle">An AI reads the top few</text>
+      <path class="flow" d="M101,578 C101,640 160,662 228,662" marker-end="url(#arrow)"/>
+      <path class="flow" d="M380,598 L380,630" marker-end="url(#arrow)"/>
+      <text class="label" x="392" y="620">Yes</text>
+
+      <!-- Keep it short -->
+      <rect class="card" x="230" y="632" width="300" height="60" rx="10"/>
+      <text class="title" x="380" y="658" text-anchor="middle">Keep it short</text>
+      <text class="sub" x="380" y="677" text-anchor="middle">Only what fits, never the whole history</text>
+      <path class="flow" d="M380,692 L380,724" marker-end="url(#arrow)"/>
+
+      <!-- Back to the tool -->
+      <rect class="ok" x="170" y="726" width="420" height="60" rx="30"/>
+      <text class="title" x="380" y="751" text-anchor="middle">Back to the tool, clearly labelled</text>
+      <text class="sub" x="380" y="770" text-anchor="middle">How trusted · in dispute · may be out of date</text>
+      <text class="sub" x="380" y="806" text-anchor="middle">Each time a memory is used, it’s kept around longer.</text>
+
+      <!-- Subagents -->
+      <line class="rule" x1="16" y1="822" x2="744" y2="822"/>
+      <text class="section" x="16" y="852">SUBAGENTS</text>
+      <rect class="card" x="16" y="872" width="160" height="72" rx="10"/>
+      <text class="title" x="96" y="900" text-anchor="middle">A task is handed off</text>
+      <text class="sub" x="96" y="919" text-anchor="middle">To a helper agent</text>
+      <path class="flow" d="M176,908 L204,908" marker-end="url(#arrow)"/>
+      <rect class="store" x="206" y="872" width="160" height="72" rx="10"/>
+      <text class="store-title" x="286" y="900" text-anchor="middle">Its own small pool</text>
+      <text class="store-sub" x="286" y="919" text-anchor="middle">Only what the task needs</text>
+      <path class="flow" d="M366,908 L394,908" marker-end="url(#arrow)"/>
+      <rect class="card" x="396" y="872" width="160" height="72" rx="10"/>
+      <text class="title" x="476" y="900" text-anchor="middle">Asks for more</text>
+      <text class="sub" x="476" y="919" text-anchor="middle">If something is missing</text>
+      <path class="flow" d="M556,908 L584,908" marker-end="url(#arrow)"/>
+      <rect class="ok" x="586" y="872" width="158" height="72" rx="10"/>
+      <text class="title" x="665" y="900" text-anchor="middle">Findings come back</text>
+      <text class="sub" x="665" y="919" text-anchor="middle">The rest is thrown away</text>
+      <text class="sub" x="380" y="980" text-anchor="middle">The helper never sees your full memory, so it stays focused and can’t leak what it doesn’t need.</text>
+    </svg>
+  </div>
+</main>
+</body>
+</html>

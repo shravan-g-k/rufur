@@ -128,6 +128,21 @@ export interface LlmLog {
   keys: Record<string, { total: number; spent: number; next_back: number | null }>;
 }
 
+export type Role = "public" | "internal" | "confidential" | "restricted";
+
+export interface Access {
+  roles: { role: Role; description: string; memories: number }[];
+  agents: { name: string; role: Role; quarantined: boolean; editable: boolean }[];
+  pools: { name: string; kind: string; read: string[]; write: string[] }[];
+}
+
+export interface MemoryAccess {
+  memory_id: string;
+  sensitivity: Role;
+  readers: string[];
+  denied: string[];
+}
+
 export interface GraphNode {
   id: string;
   kind: "memory" | "subject" | "entity";
@@ -378,12 +393,16 @@ export const api = {
   metrics: () => req<any>("GET", "/v1/metrics/summary"),
   audit: () => req<{ id: number; agent: string; action: string; target: string; created_at: number }[]>("GET", "/v1/audit?limit=60"),
   health: () => req<any>("GET", "/v1/health"),
-  consolidate: () => req<any>("POST", "/v1/consolidate", { journal: false }),
+  // From the dashboard: also give items an earlier run left short-term another chance.
+  consolidate: () => req<any>("POST", "/v1/consolidate", { journal: false, retry_discarded: true }),
   runs: () => req<{ id: string; trigger: string; started_at: number; finished_at: number | null; stats: any }[]>("GET", "/v1/consolidation/runs"),
   stmStats: () => req<any>("GET", "/v1/stm/stats"),
   scratchPools: () => req<any[]>("GET", "/v1/scratch-pools"),
   decisions: () => req<Decision[]>("GET", "/v1/decisions"),
   conflictHistory: () => req<SettledConflict[]>("GET", "/v1/conflicts/history?limit=30"),
+  access: () => req<Access>("GET", "/v1/access"),
+  setRole: (agent: string, role: Role) => req<unknown>("POST", `/v1/agents/${encodeURIComponent(agent)}/role`, { role }),
+  memoryAccess: (id: string) => req<MemoryAccess>("GET", `/v1/memories/${id}/access`),
   llmLog: () => req<LlmLog>("GET", "/v1/llm/log?limit=200"),
   graph: () => req<GraphData>("GET", "/v1/graph?limit=300"),
   autoReview: () => req<unknown>("POST", "/v1/review/auto"),
